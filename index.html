@@ -86,6 +86,9 @@ th{color:var(--mut);font-weight:500}
 .ov{position:fixed;inset:0;background:#000c;z-index:50;display:flex;align-items:center;justify-content:center;padding:16px}
 .ov .card{max-width:480px;width:100%;max-height:90vh;overflow:auto}
 .thumb{width:100%;border-radius:10px;background:#000}
+.lab{position:relative;background:#000;border-radius:10px;overflow:hidden;margin-top:10px;max-height:60vh}
+.lab video,.lab canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+button[disabled]{pointer-events:none}
 .kv{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:14px}
 </style>
 </head>
@@ -107,6 +110,7 @@ th{color:var(--mut);font-weight:500}
     <div class="prompt" id="prompt"></div>
   </div>
   <div class="panel" id="panel">
+   <div id="trainPanel">
     <div id="endPanel"></div>
     <div class="rate">
       <button class="b" data-a="rate" data-v="bueno">👍 Bueno</button>
@@ -121,6 +125,8 @@ th{color:var(--mut);font-weight:500}
       <button data-a="flipCam">🔄 Cám.</button>
     </div>
     <div class="last" id="lastShot"></div>
+   </div>
+   <div id="calPanel" hidden></div>
   </div>
 </div>
 
@@ -183,10 +189,13 @@ const CONN=[[11,12],[11,23],[12,24],[23,24],[11,13],[13,15],[12,14],[14,16],[15,
 const LS='arquero_v1';
 function defaultPhases(){return[{name:'Elevación',event:'levantar'},{name:'Apertura',event:'apertura'},{name:'Anclaje y puntería',event:'anclaje'},{name:'Suelta y seguimiento',event:'suelta'}];}
 function newProfile(name){return{id:uid(),name,bowHand:'L',autoRoles:true,autoDetect:true,phases:defaultPhases(),
-  params:{anchorThr:0.35,raiseThr:0.45,releaseSpeed:2.5,followMs:1500,ratingTimeout:12,model:'full',camera:'environment',voice:true,gestures:true,speak:true}};}
-function seed(){const p=newProfile('Mi perfil');return{v:1,profiles:[p],activeProfileId:p.id,sessions:[],shots:[]};}
+  params:{anchorThr:0.35,raiseThr:0.45,releaseSpeed:2.5,followMs:1500,ratingTimeout:12,model:'full',camera:'environment',voice:true,gestures:true,speak:true,useModel:true},
+  calib:{model:null,gestures:{},gThr:0.35,voice:{},vcustom:{}}};}
+function seed(){const p=newProfile('Mi perfil');return{v:1,profiles:[p],activeProfileId:p.id,sessions:[],shots:[],recs:[]};}
 function load(){try{const d=JSON.parse(localStorage.getItem(LS));if(d&&d.profiles&&d.profiles.length)return d;}catch(e){}return seed();}
 let DB=load();
+function migrate(){DB.recs=DB.recs||[];for(const p of DB.profiles){p.calib=Object.assign({model:null,gestures:{},gThr:0.35,voice:{},vcustom:{}},p.calib||{});if(p.params.useModel==null)p.params.useModel=true;}}
+migrate();
 function save(){try{localStorage.setItem(LS,JSON.stringify(DB));}catch(e){toast('⚠️ No se pudo guardar: almacenamiento lleno o bloqueado');}}
 const P=()=>DB.profiles.find(p=>p.id===DB.activeProfileId)||DB.profiles[0];
 const shotById=id=>DB.shots.find(s=>s.id===id);
@@ -194,10 +203,11 @@ const sesById=id=>DB.sessions.find(s=>s.id===id);
 
 /* Miniaturas en IndexedDB */
 let idb=null;
-function idbOpen(){return new Promise(res=>{try{const r=indexedDB.open('arquero_img',1);r.onupgradeneeded=()=>r.result.createObjectStore('t');r.onsuccess=()=>{idb=r.result;res(idb)};r.onerror=()=>res(null);}catch(e){res(null)}});}
-async function putThumb(id,data){if(!idb)await idbOpen();if(!idb)return;try{idb.transaction('t','readwrite').objectStore('t').put(data,id);}catch(e){}}
-async function getThumb(id){if(!idb)await idbOpen();if(!idb)return null;return new Promise(res=>{try{const r=idb.transaction('t').objectStore('t').get(id);r.onsuccess=()=>res(r.result||null);r.onerror=()=>res(null);}catch(e){res(null)}});}
-async function delThumb(id){if(!idb)await idbOpen();if(!idb)return;try{idb.transaction('t','readwrite').objectStore('t').delete(id);}catch(e){}}
+function idbOpen(){return new Promise(res=>{try{const r=indexedDB.open('arquero_img',2);r.onupgradeneeded=()=>{const d=r.result;if(!d.objectStoreNames.contains('t'))d.createObjectStore('t');if(!d.objectStoreNames.contains('rec'))d.createObjectStore('rec');};r.onsuccess=()=>{idb=r.result;res(idb)};r.onerror=()=>res(null);}catch(e){res(null)}});}
+async function idbPut(st,k,v){if(!idb)await idbOpen();if(!idb)return false;return new Promise(res=>{try{const tx=idb.transaction(st,'readwrite');tx.objectStore(st).put(v,k);tx.oncomplete=()=>res(true);tx.onerror=()=>res(false);tx.onabort=()=>res(false);}catch(e){res(false)}});}
+async function idbGet(st,k){if(!idb)await idbOpen();if(!idb)return null;return new Promise(res=>{try{const r=idb.transaction(st).objectStore(st).get(k);r.onsuccess=()=>res(r.result||null);r.onerror=()=>res(null);}catch(e){res(null)}});}
+async function idbDel(st,k){if(!idb)await idbOpen();if(!idb)return;try{idb.transaction(st,'readwrite').objectStore(st).delete(k);}catch(e){}}
+const putThumb=(id,d)=>idbPut('t',id,d),getThumb=id=>idbGet('t',id),delThumb=id=>idbDel('t',id);
 
 /* ========= REFERENCIA (tiros perfectos) ========= */
 function reference(pid){
@@ -229,7 +239,8 @@ function nav(v,arg,replace){curView={v,arg};const st={v,arg};try{replace?history
 window.addEventListener('popstate',e=>{if(!$('#train').hidden){stopTrain();}curView=e.state||{v:'home'};render();});
 function render(){
   $('#train').hidden=true;$('#view').hidden=false;
-  const f=VIEWS[curView.v]||VIEWS.home;$('#view').innerHTML=f(curView.arg);window.scrollTo(0,0);
+  if(curView.v!=='label'&&L){if(L.url)URL.revokeObjectURL(L.url);L=null;}
+  const f=VIEWS[curView.v]||VIEWS.home;$('#view').innerHTML=f(curView.arg);window.scrollTo(0,0);if(curView.v==='profile')showEstimate();
 }
 const back=(to='home')=>`<button class="btn sm" data-a="go" data-v="${to}">← Volver</button>`;
 
@@ -248,6 +259,7 @@ VIEWS.home=()=>{
     <button class="big" data-a="go" data-v="history">📚 Historial<small>${DB.sessions.filter(s=>s.profileId===p.id).length} sesiones · ${nShots} tiros</small></button>
     <button class="big" data-a="go" data-v="profile">⚙️ Perfil y fases<small>${p.phases.length} fases configuradas</small></button>
     <button class="big" data-a="go" data-v="stats">📊 Estadísticas<small>Qué hace bueno a tu tiro</small></button>
+    <button class="big" data-a="go" data-v="calib">🧪 Calibración<small>${activeModel(p)?'Detector calibrado':labeledCount(p)+'/10 tiros etiquetados'}</small></button>
     <button class="big" data-a="go" data-v="help">❓ Ayuda<small>Cámara, voz y gestos</small></button>
   </div>
   <div class="card"><b>⭐ Tu tiro perfecto</b><div class="mut">${ref.n} tiro(s) marcados como perfectos. ${ref.n<2?'Marcá al menos 2 (ideal 10 o más) para que la app compare cada tiro con tu referencia.':'La app ya compara cada tiro con tu referencia.'}</div></div>`;
@@ -271,7 +283,7 @@ VIEWS.help=()=>`${back()}<h1>Ayuda</h1>
 <b>Suelta:</b> la mano de cuerda sale rápido del anclaje.<br>
 <b>Fin:</b> bajás el arco o pasa el tiempo de seguimiento.<br>
 Si bajás sin soltar se registra como <b>bajada</b> (no cuenta como tiro). Podés ajustar la sensibilidad en tu perfil, o poner fases en modo manual.</div></div>
-<div class="card"><b>💾 Tus datos</b><div class="mut">Todo se guarda en este navegador del celu. Usá Exportar en el perfil para hacer copias de seguridad.</div></div>`;
+<div class="card"><b>💾 ¿Dónde se guardan tus datos?</b><div class="mut">En el almacenamiento interno del navegador de este celu, asociado a la dirección de la app: perfiles, sesiones y calibración en <i>localStorage</i>; fotos de los tiros y grabaciones en <i>IndexedDB</i>. No se suben a ningún servidor.<br>• Si borrás los datos de navegación o del sitio en Chrome, se pierden.<br>• Otro navegador, otro celu o otra dirección no los ven.<br>• Usá <b>Exportar</b> en el perfil para hacer copias de seguridad (las grabaciones de video no se incluyen).</div></div>`;
 
 VIEWS.profiles=()=>`${back()}<h1>Perfiles</h1>
 <div class="card">${DB.profiles.map(p=>`<div class="list-item"><div class="sp"><b>${h(p.name)}</b><div class="mut">${DB.shots.filter(s=>s.profileId===p.id).length} tiros · ${DB.shots.filter(s=>s.profileId===p.id&&s.perfect).length} perfectos</div></div>
@@ -280,7 +292,9 @@ ${p.id===DB.activeProfileId?'<span class="tag r-bueno">Activo</span>':`<button c
 
 VIEWS.profile=()=>{
   const p=P(),pr=p.params,ref=reference(p.id);
+  const nl=labeledCount(p),cm=activeModel(p);
   return `${back()}<h1>Perfil: ${h(p.name)}</h1>
+  <button class="big pri" style="width:100%" data-a="go" data-v="calib">🧪 Calibración<small>${cm?'Detector calibrado con '+p.calib.model.n+' tiros':nl+'/10 tiros etiquetados'} · voz · gestos</small></button>
   <div class="card">
   <label class="f">Nombre</label><input data-c="pf" data-k="name" value="${h(p.name)}">
   <label class="f">Mano de arco</label><select data-c="pf" data-k="bowHand"><option value="L"${p.bowHand==='L'?' selected':''}>Izquierda (arquero diestro)</option><option value="R"${p.bowHand==='R'?' selected':''}>Derecha (arquero zurdo)</option></select>
@@ -307,12 +321,13 @@ VIEWS.profile=()=>{
   <div class="mut">${ref.n} tiro(s) perfectos.${ref.n<2?' Se necesitan al menos 2.':''}</div>
   ${ref.f?`<table><tr><th>Parámetro</th><th>Tu referencia</th></tr>${Object.entries(ref.f).map(([k,v])=>`<tr><td>${FEAT[k].l}</td><td>${fmtF(k,v.m)} <span class="mut">± ${fmtF(k,v.sd)}</span></td></tr>`).join('')}</table>`:''}
   </div>
-  <h2>Datos</h2><div class="card row">
+  <h2>Datos</h2><div class="mut" id="stEst">Todo se guarda en este navegador, en este celu.</div><div class="card row">
   <button class="btn" data-a="exportData">⬇️ Exportar</button>
   <label class="btn" style="display:inline-block">⬆️ Importar<input type="file" accept=".json,application/json" data-c="importData" hidden></label>
   ${DB.profiles.length>1?'<button class="btn danger" data-a="delProfile">Borrar perfil</button>':''}
   </div>`;
 };
+async function showEstimate(){try{const e=await navigator.storage.estimate();const el=$('#stEst');if(el)el.textContent=`Todo se guarda en este navegador, en este celu. Espacio usado: ${fx(e.usage/1048576,1)} MB de ${fx(e.quota/1048576,0)} MB disponibles.`;}catch(x){}}
 function num(k,l,v,min,max,step){return `<label class="f">${l}</label><input type="number" data-c="pp" data-k="${k}" value="${v}" min="${min}" max="${max}" step="${step}" inputmode="decimal">`;}
 function fmtF(k,v){const F=FEAT[k];return fx(v,F.d)+(F.u&&F.u!==''?(F.u==='s'?' s':F.u):'');}
 
@@ -403,7 +418,7 @@ const A={};
 A.go=(v,el)=>nav(v,el.dataset.arg);
 A.setProfile=id=>{DB.activeProfileId=id;save();nav('home',null,true);};
 A.addProfile=()=>{const p=newProfile('Perfil '+(DB.profiles.length+1));DB.profiles.push(p);DB.activeProfileId=p.id;save();nav('profile');};
-A.delProfile=()=>{const p=P();askConfirm(`¿Borrar el perfil "${p.name}" y todos sus tiros?`,()=>{DB.shots.filter(s=>s.profileId===p.id).forEach(s=>delThumb(s.id));DB.shots=DB.shots.filter(s=>s.profileId!==p.id);DB.sessions=DB.sessions.filter(s=>s.profileId!==p.id);DB.profiles=DB.profiles.filter(x=>x.id!==p.id);DB.activeProfileId=DB.profiles[0].id;save();nav('home',null,true);});};
+A.delProfile=()=>{const p=P();askConfirm(`¿Borrar el perfil "${p.name}" y todos sus tiros?`,()=>{DB.shots.filter(s=>s.profileId===p.id).forEach(s=>delThumb(s.id));DB.shots=DB.shots.filter(s=>s.profileId!==p.id);DB.sessions=DB.sessions.filter(s=>s.profileId!==p.id);DB.recs.filter(r=>r.profileId===p.id).forEach(r=>idbDel('rec',r.id));DB.recs=DB.recs.filter(r=>r.profileId!==p.id);DB.profiles=DB.profiles.filter(x=>x.id!==p.id);DB.activeProfileId=DB.profiles[0].id;save();nav('home',null,true);});};
 A.phUp=i=>{i=+i;if(i<1)return;const a=P().phases;[a[i-1],a[i]]=[a[i],a[i-1]];save();render();};
 A.phDel=i=>{const a=P().phases;if(a.length<=1)return toast('Tiene que haber al menos una fase');a.splice(+i,1);save();render();};
 A.phAdd=()=>{P().phases.push({name:'Nueva fase',event:'manual'});save();render();};
@@ -425,6 +440,7 @@ A.togglePerfect=id=>{const s=shotById(id);if(s){s.perfect=!s.perfect;if(s.perfec
 function askConfirm(msg,fn){const o=document.createElement('div');o.className='ov';o.innerHTML=`<div class="card"><p>${h(msg)}</p><div class="row"><div class="sp"></div><button class="btn" id="cNo">Cancelar</button><button class="btn danger" id="cYes">Confirmar</button></div></div>`;document.body.appendChild(o);$('#cNo',o).onclick=()=>o.remove();$('#cYes',o).onclick=()=>{o.remove();fn();};}
 
 document.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(!el)return;const f=A[el.dataset.a];if(f){e.preventDefault();f(el.dataset.v,el,e);}});
+document.addEventListener('input',e=>{if(e.target.dataset.c==='lseek'&&L){if(L.playing)A.lplay();labSeek(+e.target.value);}});
 document.addEventListener('change',e=>{
   const el=e.target,c=el.dataset.c;if(!c)return;const p=P();
   if(c==='pf'){p[el.dataset.k]=el.type==='checkbox'?el.checked:el.value;save();}
@@ -432,8 +448,9 @@ document.addEventListener('change',e=>{
   else if(c==='phn'){p.phases[+el.dataset.i].name=el.value||'Fase';save();}
   else if(c==='phe'){p.phases[+el.dataset.i].event=el.value;save();}
   else if(c==='nsTarget'){const t=TARGETS.find(x=>x.id===el.value);if(t){if(t.d)$('#ns_diam').value=t.d;$('#ns_sys').value=t.s;$('#ns_x').value=SYS[t.s].x;}}
+  else if(c==='vcustom'){p.calib.vcustom=p.calib.vcustom||{};p.calib.vcustom[el.dataset.k]=norm(el.value).split(',').map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);save();}
   else if(c==='nsSys'){$('#ns_x').value=SYS[el.value].x;}
-  else if(c==='importData'){const f=el.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.profiles)throw 0;askConfirm('¿Reemplazar todos los datos actuales por los del archivo?',()=>{DB=d;save();nav('home',null,true);toast('Datos importados');});}catch(x){toast('Archivo inválido');}};r.readAsText(f);}
+  else if(c==='importData'){const f=el.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.profiles)throw 0;askConfirm('¿Reemplazar todos los datos actuales por los del archivo?',()=>{DB=d;migrate();save();nav('home',null,true);toast('Datos importados');});}catch(x){toast('Archivo inválido');}};r.readAsText(f);}
 });
 
 /* ========= ENTRENAMIENTO ========= */
@@ -445,7 +462,7 @@ const MODELS={
   heavy:'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task',
   gesture:'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
 };
-const T={running:false,stream:null,pose:null,poseModel:null,gest:null,vision:null,fileset:null,ses:null,lastVT:-1,frame:0,mode:'live',paused:false,blocked:false,sel:0,sm:null,swapped:false,swapCnt:0,lastShotId:null,ratingUntil:0,g:{name:null,since:0},pendingRaise:null,hudT:0,hintT:0,wake:null,ignoreVoiceUntil:0,person:false,fps:0,fpsT:0,fpsN:0};
+const T={camMode:'train',rec:null,gcal:null,running:false,stream:null,pose:null,poseModel:null,gest:null,vision:null,fileset:null,ses:null,lastVT:-1,frame:0,mode:'live',paused:false,blocked:false,sel:0,sm:null,swapped:false,swapCnt:0,lastShotId:null,ratingUntil:0,g:{name:null,since:0},pendingRaise:null,hudT:0,hintT:0,wake:null,ignoreVoiceUntil:0,person:false,fps:0,fpsT:0,fpsN:0};
 let S={shot:null};
 let D=newDetector();
 function newDetector(){return{st:'idle',raiseSince:0,lowSince:0,needLower:false,maxAD:0,anchorCand:0,anchorT:0,relT:0,samples:[],relRef:null,relFeat:null,prevSw:null,prevT:0,speed:0,thumbDone:false,thumb:null};}
@@ -453,25 +470,34 @@ const vid=$('#vid'),cv=$('#cv'),ctx=cv.getContext('2d');
 
 async function startTrain(sesId){
   T.ses=sesById(sesId);if(!T.ses)return;
-  T.ses.done=false;
-  $('#view').hidden=true;$('#train').hidden=false;
-  try{if(curView.v==='newSession'){history.replaceState({v:'home'},'');curView={v:'home'};}history.pushState({v:'train'},'');}catch(e){}
-  T.mode='live';T.paused=false;T.blocked=false;S.shot=null;D=newDetector();T.lastShotId=null;T.sm=null;
+  T.ses.done=false;T.camMode='train';T.retry=()=>startTrain(sesId);
+  T.mode='live';T.paused=false;T.blocked=false;S.shot=null;D=newDetector();M=newModelState();T.lastShotId=null;
   if(T.ses.type==='sesion'){T.sel=firstEmptyScore();if(isEndFull())T.blocked=true;}
-  renderEnd();renderLast();setHud('Cargando detector…','La primera vez puede tardar unos segundos');
+  renderEnd();renderLast();
+  await openCam();
+}
+async function openCam(){
+  $('#view').hidden=true;$('#train').hidden=false;
+  $('#trainPanel').hidden=T.camMode!=='train';$('#calPanel').hidden=T.camMode==='train';
+  $('#phasebar').innerHTML='';$('#hint').textContent='';$('#prompt').innerHTML='';
+  try{if(curView.v==='newSession'){history.replaceState({v:'home'},'');curView={v:'home'};}history.pushState({v:'cam'},'');}catch(e){}
+  T.sm=null;T.lastVT=-1;T.handPts=null;T.swapped=false;
+  if(T.camMode!=='train')renderCalPanel();
+  setHud('Cargando detector…','La primera vez puede tardar unos segundos');
   T.running=true;
   try{await startCamera();}catch(e){camError(e);return;}
-  try{await loadModels();}catch(e){console.error(e);setHud('No se pudo cargar el detector','Revisá tu conexión a internet y volvé a intentar');return;}
-  if(P().params.voice)startVoice();
+  try{await loadModels(T.camMode==='gesture');}catch(e){console.error(e);setHud('No se pudo cargar el detector','Revisá tu conexión a internet y volvé a intentar');return;}
+  if(T.camMode!=='gesture'&&P().params.voice)startVoice();
   wakeLock();
-  setHud('Listo','Ponete en posición');
+  setHud('Listo',T.camMode==='train'?'Ponete en posición':'');
   requestAnimationFrame(loop);
 }
 function stopTrain(){
   T.running=false;stopVoice();
-  if(T.stream){T.stream.getTracks().forEach(t=>t.stop());T.stream=null;}
+  const fin=()=>{if(T.stream){T.stream.getTracks().forEach(t=>t.stop());T.stream=null;}};
+  if(T.rec&&T.rec.on)recStop().finally(fin);else fin();
   try{T.wake&&T.wake.release();}catch(e){}T.wake=null;
-  if(S.shot)S.shot=null;
+  S.shot=null;T.gcal=null;
   save();
 }
 A.exitTrain=()=>{history.back();};
@@ -501,7 +527,7 @@ async function startCamera(){
   const m=fm==='user';vid.classList.toggle('mirror',m);cv.classList.toggle('mirror',m);
 }
 A.flipCam=async()=>{const p=P();p.params.camera=p.params.camera==='user'?'environment':'user';save();try{await startCamera();}catch(e){toast('No se pudo cambiar la cámara');}};
-async function loadModels(){
+async function loadModels(needGest){
   if(!T.vision){T.vision=await import(`${MP_URL}/vision_bundle.mjs`);T.fileset=await T.vision.FilesetResolver.forVisionTasks(`${MP_URL}/wasm`);}
   const want=P().params.model||'full';
   if(!T.pose||T.poseModel!==want){
@@ -509,8 +535,9 @@ async function loadModels(){
     T.pose=await mkTask(T.vision.PoseLandmarker,{baseOptions:{modelAssetPath:MODELS[want]},runningMode:'VIDEO',numPoses:1,minPoseDetectionConfidence:0.5,minPosePresenceConfidence:0.5,minTrackingConfidence:0.5});
     T.poseModel=want;
   }
-  if(P().params.gestures&&!T.gest){
-    mkTask(T.vision.GestureRecognizer,{baseOptions:{modelAssetPath:MODELS.gesture},runningMode:'VIDEO',numHands:1}).then(g=>T.gest=g).catch(e=>console.warn('gestos',e));
+  if((needGest||P().params.gestures)&&!T.gest){
+    const pr=mkTask(T.vision.GestureRecognizer,{baseOptions:{modelAssetPath:MODELS.gesture},runningMode:'VIDEO',numHands:1}).then(g=>T.gest=g);
+    if(needGest)await pr;else pr.catch(e=>console.warn('gestos',e));
   }
 }
 async function mkTask(cls,opts){
@@ -530,9 +557,14 @@ function loop(){
   if(cv.width!==vid.videoWidth){cv.width=vid.videoWidth;cv.height=vid.videoHeight;}
   let res;try{res=T.pose.detectForVideo(vid,now);}catch(e){return;}
   T.fpsN++;if(now-T.fpsT>1000){T.fps=T.fpsN;T.fpsN=0;T.fpsT=now;}
+  if(T.camMode==='record'&&T.rec&&T.rec.on&&res&&res.landmarks&&res.landmarks[0]){
+    T.rec.frames.push(packFrame(now-T.rec.t0,res.landmarks[0],res.worldLandmarks&&res.worldLandmarks[0]));
+    if(now-T.rec.t0>600000)recStop();
+  }
   const pts=processPose(res,now);
+  if(T.camMode==='gesture')gestCalStep(now);
   draw(pts);
-  if(T.mode==='rating'){
+  if(T.camMode==='train'&&T.mode==='rating'){
     handleGesture(now);
     if(now>T.ratingUntil){T.mode='live';updatePrompt();}
   }
@@ -548,41 +580,52 @@ const mid=(a,b)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
 const deg=r=>r*180/Math.PI;
 function ang3(a,b,c){const u=[a.x-b.x,a.y-b.y,a.z-b.z],v=[c.x-b.x,c.y-b.y,c.z-b.z];const d=u[0]*v[0]+u[1]*v[1]+u[2]*v[2],n=Math.hypot(...u)*Math.hypot(...v);return n?deg(Math.acos(Math.max(-1,Math.min(1,d/n)))):NaN;}
 
+/* Vector de características de un cuadro (para el detector calibrado). Orientado: +x hacia el blanco, unidades = largo del torso */
+function featVec(Pp,bS,sS,s,mo,spS,spB){
+  const o=mid(Pp[11],Pp[12]);const dir=Math.sign(Pp[bS.sh].x-Pp[sS.sh].x)||1;
+  const r=q=>[(q.x-o.x)/s*dir,(q.y-o.y)/s];
+  const sw=Pp[sS.wr],bw=Pp[bS.wr],si=Pp[sS.ix];
+  return [...r(bw),...r(Pp[bS.el]),...r(sw),...r(Pp[sS.el]),...r(si),Math.min(dist(si,mo),dist(sw,mo))/s,Math.log1p(Math.min(spS,30)),Math.log1p(Math.min(spB,30)),dist(sw,bw)/s];
+}
+function torsoScale(Pp){const s0=dist(mid(Pp[11],Pp[12]),mid(Pp[23],Pp[24]));const hipsOk=Pp[23].v>0.4&&Pp[24].v>0.4;return{s:Math.max(hipsOk?s0:dist(Pp[11],Pp[12])*1.3,20),hipsOk};}
+function smoothInto(arr,lm,W,H,a){for(let i=0;i<33;i++){const x=lm[i].x*W,y=lm[i].y*H,v=lm[i].visibility??1;if(!arr[i])arr[i]={x,y,v};else{arr[i].x+=(x-arr[i].x)*a;arr[i].y+=(y-arr[i].y)*a;arr[i].v=v;}}}
 function processPose(res,now){
   const lm=res&&res.landmarks&&res.landmarks[0],wl=res&&res.worldLandmarks&&res.worldLandmarks[0];
   if(!lm){T.person=false;return null;}
   T.person=true;
   const W=vid.videoWidth,H=vid.videoHeight;
-  if(!T.sm)T.sm=[];const Pp=T.sm;
-  for(let i=0;i<33;i++){const x=lm[i].x*W,y=lm[i].y*H,v=lm[i].visibility??1;if(!Pp[i])Pp[i]={x,y,v};else{Pp[i].x+=(x-Pp[i].x)*0.65;Pp[i].y+=(y-Pp[i].y)*0.65;Pp[i].v=v;}}
+  if(!T.sm)T.sm=[];const Pp=T.sm;smoothInto(Pp,lm,W,H,0.65);
   const prof=P(),prm=prof.params;
   let bS=SIDE[prof.bowHand],sS=SIDE[prof.bowHand==='L'?'R':'L'];
   if(T.swapped)[bS,sS]=[sS,bS];
   const nose=Pp[0];
-  const s0=dist(mid(Pp[11],Pp[12]),mid(Pp[23],Pp[24]));
-  const hipsOk=Pp[23].v>0.4&&Pp[24].v>0.4;
-  const s=Math.max(hipsOk?s0:dist(Pp[11],Pp[12])*1.3,20);
-  // auto-corrección de roles
-  if(prof.autoRoles&&D.st!=='anchored'&&D.st!=='released'){
+  const{s,hipsOk}=torsoScale(Pp);
+  if(prof.autoRoles&&D.st!=='anchored'&&D.st!=='released'&&(M.c===0)){
     const bw=Pp[bS.wr],sw=Pp[sS.wr];
     const bothUp=bw.y<Pp[bS.sh].y+prm.raiseThr*s&&sw.y<Pp[sS.sh].y+prm.raiseThr*s;
     if(bothUp&&dist(bw,nose)<dist(sw,nose)*0.6){if(++T.swapCnt>8){T.swapped=!T.swapped;T.swapCnt=0;[bS,sS]=[sS,bS];}}else T.swapCnt=0;
   }
-  const bs=Pp[bS.sh],be=Pp[bS.el],bw=Pp[bS.wr],ss=Pp[sS.sh],se=Pp[sS.el],sw=Pp[sS.wr],si=Pp[sS.ix];
+  const bs=Pp[bS.sh],bw=Pp[bS.wr],ss=Pp[sS.sh],se=Pp[sS.el],sw=Pp[sS.wr],si=Pp[sS.ix];
   const mo=dist(si,Pp[9])<dist(si,Pp[10])?Pp[9]:Pp[10];
   const pts={P:Pp,bS,sS,s,mo};
-  const keyVis=[bs,ss,bw,sw].every(p=>p.v>0.3);
-  if(!keyVis||T.paused)return pts;
-  const ad=Math.min(dist(si,mo),dist(sw,mo))/s;
-  pts.ad=ad;
-  // velocidad mano de cuerda
-  if(D.prevSw&&now>D.prevT){const v=dist(sw,D.prevSw)/s/((now-D.prevT)/1000);D.speed=v;}
-  const prevSw=D.prevSw;D.prevSw={x:sw.x,y:sw.y};D.prevT=now;
+  if(T.camMode!=='train'||T.paused)return pts;
+  if(![bs,ss,bw].every(p=>p.v>0.3))return pts;
+  const strVis=sw.v>0.3;
+  const ad=Math.min(dist(si,mo),dist(sw,mo))/s;pts.ad=ad;T.liveAd=ad;
+  // velocidades con posiciones crudas (sin suavizar) para captar la suelta
+  const rsw={x:lm[sS.wr].x*W,y:lm[sS.wr].y*H},rbw={x:lm[bS.wr].x*W,y:lm[bS.wr].y*H};
+  if(D.prevSw&&now>D.prevT){const dt=(now-D.prevT)/1000;D.speed=dist(rsw,D.prevSw)/s/dt;D.bspeed=dist(rbw,D.prevBw)/s/dt;}
+  D.prevSw=rsw;D.prevBw=rbw;D.prevT=now;T.liveSpeed=D.speed||0;
   const raised=bw.y<bs.y+prm.raiseThr*s;
   if(raised)D.lowSince=0;else if(!D.lowSince)D.lowSince=now;
   const lowFor=raised?0:now-D.lowSince;
-  const abort=()=>{const was=D.st;D=Object.assign(newDetector(),{needLower:!raised,prevSw:D.prevSw,prevT:D.prevT});if(was!=='idle'&&was!=='raised')emit('abort',now);else emit('reset',now);};
-  switch(D.st){
+  const model=activeModel(prof);
+  const geo={sw,bw,s};
+  if(model)modelStep(model,featVec(Pp,bS,sS,s,mo,D.speed||0,D.bspeed||0),now,geo);
+  const abort=()=>{const was=D.st;D=Object.assign(newDetector(),{needLower:!raised,prevSw:D.prevSw,prevBw:D.prevBw,prevT:D.prevT});if(was!=='idle'&&was!=='raised')emit('abort',now);else emit('reset',now);};
+  const u0=sub(sw,bw),L=len(u0)||1,u={x:u0.x/L,y:u0.y/L};let n={x:-u.y,y:u.x};if(n.y<0)n={x:-n.x,y:-n.y};
+  const release=(t,ref)=>{D.st='released';D.relT=t;D.relRef={sw:{x:ref.x,y:ref.y},bw:{x:bw.x,y:bw.y},u,n,s};D.relFeat=null;emit('suelta',t);};
+  switch(model?'ext':D.st){
     case 'idle':
       if(D.needLower){if(lowFor>300)D.needLower=false;break;}
       if(raised){if(!D.raiseSince)D.raiseSince=now;if(now-D.raiseSince>150){D.st='raised';D.maxAD=ad;emit('levantar',D.raiseSince);}}else D.raiseSince=0;
@@ -593,37 +636,41 @@ function processPose(res,now){
       else if(lowFor>400)abort();
       break;
     case 'drawing':
-      if(ad<prm.anchorThr&&D.speed<1.2){if(!D.anchorCand)D.anchorCand=now;if(now-D.anchorCand>200){D.st='anchored';D.anchorT=D.anchorCand;D.samples=[];emit('anclaje',D.anchorT);}}
+      if(strVis&&ad<prm.anchorThr&&D.speed<1.5){if(!D.anchorCand)D.anchorCand=now;if(now-D.anchorCand>200){D.st='anchored';D.anchorT=D.anchorCand;D.samples=[];D.exitT=0;D.invis=0;emit('anclaje',D.anchorT);}}
       else D.anchorCand=0;
       if(lowFor>400)abort();
       break;
     case 'anchored':{
-      const u0=sub(sw,bw),L=len(u0)||1,u={x:u0.x/L,y:u0.y/L};let n={x:-u.y,y:u.x};if(n.y<0)n={x:-n.x,y:-n.y};
-      if(D.speed>prm.releaseSpeed&&ad>prm.anchorThr*0.9){
-        const ref=prevSw||sw;D.st='released';D.relT=now;D.relRef={sw:{x:ref.x,y:ref.y},bw:{x:bw.x,y:bw.y},u,n,s};emit('suelta',now);break;
-      }
-      if(ad>prm.anchorThr*1.8||lowFor>300){abort();break;}
-      if(wl){
-        const sp={s,bowElbow:ang3(wl[bS.sh],wl[bS.el],wl[bS.wr]),drawElbow:ang3(wl[sS.sh],wl[sS.el],wl[sS.wr]),
-          elbowLine:dot(sub(se,bw),n)/s*100,
-          shoulderTilt:deg(Math.atan2(ss.y-bs.y,Math.abs(ss.x-bs.x)||1)),
-          torsoLean:hipsOk?deg(Math.atan2((mid(bs,ss).x-mid(Pp[23],Pp[24]).x)*Math.sign(bw.x-ss.x||1),mid(Pp[23],Pp[24]).y-mid(bs,ss).y)):NaN,
-          headTilt:(Pp[bS.eye].v>0.3&&Pp[sS.eye].v>0.3)?deg(Math.atan2(Pp[sS.eye].y-Pp[bS.eye].y,Math.abs(Pp[sS.eye].x-Pp[bS.eye].x)||1)):NaN,
-          anchorDx:dot(sub(si,mo),u)/s*100,anchorDy:dot(sub(si,mo),n)/s*100,bw:{x:bw.x,y:bw.y},sw:{x:sw.x,y:sw.y}};
-        D.samples.push(sp);if(D.samples.length>600)D.samples.shift();
-        pts.sample=sp;
-      }
-      if(!D.thumbDone&&now-D.anchorT>350){D.thumbDone=true;D.thumb=captureThumb();}
+      if(strVis&&ad<=prm.anchorThr){D.lastAnchSw={x:sw.x,y:sw.y};D.exitT=0;}
+      else if(!D.exitT){D.exitT=now;D.exitAt=D.lastAnchSw||{x:sw.x,y:sw.y};}
+      D.invis=strVis?0:D.invis+1;
+      const fast=strVis&&D.speed>prm.releaseSpeed&&ad>prm.anchorThr*0.8;
+      const jump=D.exitT&&now-D.exitT<350&&ad>prm.anchorThr*2;
+      const vanished=D.invis>=3&&raised;
+      if(fast||jump||vanished){release(D.exitT||now,D.exitAt||D.lastAnchSw||sw);break;}
+      if((D.exitT&&now-D.exitT>=350&&ad>prm.anchorThr*1.8)||lowFor>300){abort();break;}
       break;}
     case 'released':
-      if(!D.relFeat&&now-D.relT>=250)D.relFeat=relFeatures(sw,bw);
       if((lowFor>200&&now-D.relT>400)||now-D.relT>prm.followMs){
         if(!D.relFeat)D.relFeat=relFeatures(sw,bw);
-        D.st='done';emit('fin',now);
+        emit('fin',now);
         D.st='idle';D.raiseSince=0;D.needLower=true;
       }
       break;
   }
+  // muestreo de postura durante el anclaje y medición de la suelta (con o sin detector calibrado)
+  if(D.st==='anchored'&&wl&&strVis&&ad<=prm.anchorThr*1.4){
+    const sp={s,bowElbow:ang3(wl[bS.sh],wl[bS.el],wl[bS.wr]),drawElbow:ang3(wl[sS.sh],wl[sS.el],wl[sS.wr]),
+      elbowLine:dot(sub(se,bw),n)/s*100,
+      shoulderTilt:deg(Math.atan2(ss.y-bs.y,Math.abs(ss.x-bs.x)||1)),
+      torsoLean:hipsOk?deg(Math.atan2((mid(bs,ss).x-mid(Pp[23],Pp[24]).x)*Math.sign(bw.x-ss.x||1),mid(Pp[23],Pp[24]).y-mid(bs,ss).y)):NaN,
+      headTilt:(Pp[bS.eye].v>0.3&&Pp[sS.eye].v>0.3)?deg(Math.atan2(Pp[sS.eye].y-Pp[bS.eye].y,Math.abs(Pp[sS.eye].x-Pp[bS.eye].x)||1)):NaN,
+      anchorDx:dot(sub(si,mo),u)/s*100,anchorDy:dot(sub(si,mo),n)/s*100,bw:{x:bw.x,y:bw.y},sw:{x:sw.x,y:sw.y}};
+    D.samples.push(sp);if(D.samples.length>600)D.samples.shift();
+    pts.sample=sp;D.lastU=u;D.lastN=n;if(model)D.lastAnchSw={x:sw.x,y:sw.y};
+    if(!D.thumbDone&&now-D.anchorT>350){D.thumbDone=true;D.thumb=captureThumb();}
+  }
+  if(D.st==='released'&&!D.relFeat&&now-D.relT>=250)D.relFeat=relFeatures(sw,bw);
   return pts;
 }
 function relFeatures(sw,bw){const r=D.relRef;if(!r)return null;const d=sub(sw,r.sw);return{releaseBack:dot(d,r.u)/r.s*100,releaseDev:dot(d,r.n)/r.s*100,bowDrop:(bw.y-r.bw.y)/r.s*100};}
@@ -640,18 +687,21 @@ function captureThumb(){try{const w=320,hh=Math.round(w*cv.height/cv.width)||180
   if(vid.classList.contains('mirror')){x.translate(w,0);x.scale(-1,1);}x.drawImage(vid,0,0,w,hh);x.drawImage(cv,0,0,w,hh);return c.toDataURL('image/jpeg',0.65);}catch(e){return null;}}
 
 /* ---- Fases / ciclo del tiro ---- */
-function emit(ev,t){
+function emit(ev,t,idx){
   const prof=P();
-  if(T.blocked)return;
+  if(T.camMode!=='train'||T.blocked)return;
   if(T.mode==='rating'){
-    if(ev==='levantar'){T.pendingRaise=t;return;}
-    if(ev==='apertura'&&T.pendingRaise){endRating();const pr=T.pendingRaise;T.pendingRaise=null;emit('levantar',pr);}
+    const isStart=ev==='levantar'||(ev==='phase'&&idx===0);
+    const isNext=ev==='apertura'||(ev==='phase'&&idx>=1);
+    if(isStart){T.pendingRaise={t,idx};return;}
+    if(isNext&&T.pendingRaise){endRating();const pr=T.pendingRaise;T.pendingRaise=null;emit(pr.idx!=null?'phase':'levantar',pr.t,pr.idx);}
     else return;
   }
   if(ev==='reset'){if(S.shot&&prof.autoDetect&&!S.shot.manualStart)S.shot=null;return;}
   if(ev==='abort'){if(S.shot&&prof.autoDetect){S.shot=null;T.ses.letdowns=(T.ses.letdowns||0)+1;save();toast('↩️ Bajada: tiro no contado');say('Bajada');}return;}
   if(ev==='fin'){if(S.shot&&prof.autoDetect)finalizeShot(t);return;}
   if(!prof.autoDetect)return;
+  if(ev==='phase'){const cur=S.shot?S.shot.pi:-1;if(idx>cur)gotoPhase(idx,t);return;}
   const ph=prof.phases,cur=S.shot?S.shot.pi:-1;
   for(let j=cur+1;j<ph.length;j++){if(ph[j].event===ev){gotoPhase(j,t);return;}}
 }
@@ -667,8 +717,8 @@ A.advance=()=>{
   if(!S.shot){gotoPhase(0,t,true);return;}
   if(S.shot.pi>=n-1)finalizeShot(t);else gotoPhase(S.shot.pi+1,t,true);
 };
-A.pause=()=>{T.paused=!T.paused;$('#pauseBtn').textContent=T.paused?'▶ Seguir':'⏸ Pausa';if(T.paused){S.shot=null;D=newDetector();}toast(T.paused?'Detección en pausa':'Detección activa');};
-A.cancelShot=()=>{if(S.shot){S.shot=null;D=Object.assign(newDetector(),{needLower:true});toast('Tiro anulado');}else if(T.lastShotId&&T.mode==='rating'){askConfirm('¿Borrar el último tiro registrado?',()=>{removeShot(T.lastShotId);T.lastShotId=null;T.mode='live';T.blocked=false;save();renderEnd();renderLast();updatePrompt();});}else toast('No hay tiro en curso');};
+A.pause=()=>{T.paused=!T.paused;$('#pauseBtn').textContent=T.paused?'▶ Seguir':'⏸ Pausa';if(T.paused){S.shot=null;D=newDetector();M=newModelState();}toast(T.paused?'Detección en pausa':'Detección activa');};
+A.cancelShot=()=>{if(S.shot){S.shot=null;M=newModelState();D=Object.assign(newDetector(),{needLower:true});toast('Tiro anulado');}else if(T.lastShotId&&T.mode==='rating'){askConfirm('¿Borrar el último tiro registrado?',()=>{removeShot(T.lastShotId);T.lastShotId=null;T.mode='live';T.blocked=false;save();renderEnd();renderLast();updatePrompt();});}else toast('No hay tiro en curso');};
 
 function finalizeShot(t){
   const prof=P(),sh=S.shot;S.shot=null;
@@ -709,12 +759,15 @@ A.rate=r=>rateLast(r);
 function handleGesture(now){
   if(!T.gest||!P().params.gestures||T.frame%2)return;
   let r;try{r=T.gest.recognizeForVideo(vid,now);}catch(e){return;}
+  const l=r&&r.landmarks&&r.landmarks[0];T.handPts=l||null;
   const g=r&&r.gestures&&r.gestures[0]&&r.gestures[0][0];
   const map={Thumb_Up:'bueno',Thumb_Down:'malo',Open_Palm:'medio',Victory:'perfecto'};
-  if(g&&g.score>0.6&&map[g.categoryName]){
-    if(T.g.name===g.categoryName){if(now-T.g.since>700){T.g={name:null,since:0};rateLast(map[g.categoryName]);}}
-    else T.g={name:g.categoryName,since:now};
-  }else T.g={name:null,since:0};
+  const G=P().calib.gestures||{};
+  let key=null;
+  if(l){const hd=r.handedness&&r.handedness[0]&&r.handedness[0][0]&&r.handedness[0][0].categoryName;key=gestClassify(handVec(l,hd));}
+  if(!key&&g&&g.score>0.6&&map[g.categoryName]&&!(G[map[g.categoryName]]||[]).length)key=map[g.categoryName];
+  if(key){if(T.g.name===key){if(now-T.g.since>700){T.g={name:null,since:0};rateLast(key);}}else T.g={name:key,since:now};}
+  else T.g={name:null,since:0};
 }
 
 /* ---- Tanda / puntaje ---- */
@@ -735,7 +788,7 @@ A.closeEnd=()=>{T.blocked=true;T.sel=firstEmptyScore();S.shot=null;renderEnd();s
 A.nextEnd=()=>{
   const s=T.ses;if(!s||s.type!=='sesion')return;
   if(s.curEnd>=s.cfg.tandas-1){s.done=true;save();say('Sesión terminada');stopTrain();curView={v:'session',arg:s.id};try{history.replaceState(curView,'');}catch(e){}render();return;}
-  s.curEnd++;T.blocked=false;T.sel=0;S.shot=null;D=Object.assign(newDetector(),{needLower:true});T.mode='live';save();renderEnd();updatePrompt();say('Tanda '+(s.curEnd+1));
+  s.curEnd++;T.blocked=false;T.sel=0;S.shot=null;D=Object.assign(newDetector(),{needLower:true});M=newModelState();T.mode='live';save();renderEnd();updatePrompt();say('Tanda '+(s.curEnd+1));
 };
 A.finishSession=()=>askConfirm('¿Terminar la sesión ahora?',()=>{T.ses.done=true;save();stopTrain();curView={v:'session',arg:T.ses.id};try{history.replaceState(curView,'');}catch(e){}render();});
 function renderEnd(){
@@ -767,19 +820,29 @@ function updatePrompt(){
 }
 function updateHud(now){
   const prof=P(),ph=prof.phases;
+  if(T.camMode==='record'){
+    const on=T.rec&&T.rec.on;setHud(on?'⏺ Grabando':'Listo para grabar',on?`${T.rec.frames.length} cuadros`:'Tocá Grabar o decí "grabar"');
+    $('#hTimer').textContent=on?fx((now-T.rec.t0)/1000,0):'0';
+    chips(prof);return;
+  }
+  if(T.camMode==='gesture'){const g=T.gcal;if(g&&g.list[g.i])setHud('Gesto: '+RLBL[g.list[g.i]],`${g.samples.length}/${g.need} muestras`);$('#hTimer').textContent='';chips(prof);return;}
   if(T.paused)setHud('En pausa','Tocá ▶ Seguir');
   else if(!T.person)setHud('Buscando arquero…','Ubicate frente a la cámara');
   else if(S.shot){const cur=ph[S.shot.pi];setHud(cur?cur.name:'—',`Fase ${S.shot.pi+1}/${ph.length}`);}
   else if(T.blocked)setHud('Tanda completa','');
   else if(T.mode==='rating')setHud('Calificá el tiro','');
-  else setHud(D.needLower?'Bajá el arco':'Listo para tirar',prof.autoDetect?'Detección automática':'Fases manuales: tocá ▶');
+  else setHud(D.needLower?'Bajá el arco':'Listo para tirar',!prof.autoDetect?'Fases manuales: tocá ▶':activeModel(prof)?'Detector calibrado':'Detección automática');
   $('#hTimer').textContent=S.shot?fx((now-S.shot.start)/1000,1):'0,0';
   $('#phasebar').innerHTML=ph.map((p,i)=>{let tx='';if(S.shot&&S.shot.starts[i]!=null){let e=now;for(let j=i+1;j<ph.length;j++)if(S.shot.starts[j]!=null){e=S.shot.starts[j];break;}tx=fx((e-S.shot.starts[i])/1000,1);}
     return `<div class="${S.shot&&S.shot.pi===i?'cur':''}">${h(p.name)} ${tx}</div>`}).join('');
+  chips(prof);
+}
+function chips(prof){
   $('#chips').innerHTML=`<span class="chip ${T.person?'on':'off'}">● ${T.person?'Cuerpo detectado':'Sin cuerpo'}</span>`+
-    (prof.params.voice?`<span class="chip ${T.voiceOn?'on':'off'}">🎙 ${T.voiceOn?'Voz activa':'Voz apagada'}</span>`:'')+
-    (prof.params.gestures?`<span class="chip ${T.gest?'on':'off'}">✋ ${T.gest?'Gestos':'Cargando gestos'}</span>`:'')+
-    `<span class="chip">${T.fps} fps${T.swapped?' · brazos invertidos':''}</span>`;
+    (prof.params.voice&&T.camMode!=='gesture'?`<span class="chip ${T.voiceOn?'on':'off'}">🎙 ${T.voiceOn?'Voz activa':'Voz apagada'}</span>`:'')+
+    ((prof.params.gestures||T.camMode==='gesture')&&T.camMode!=='record'?`<span class="chip ${T.gest?'on':'off'}">✋ ${T.gest?'Gestos':'Cargando gestos'}</span>`:'')+
+    `<span class="chip">${T.fps} fps${T.swapped?' · brazos invertidos':''}</span>`+
+    (T.camMode==='train'&&T.liveAd!=null?`<span class="chip">anclaje ${fx(T.liveAd,2)} · vel ${fx(T.liveSpeed,1)}</span>`:'');
 }
 function draw(pts){
   ctx.clearRect(0,0,cv.width,cv.height);
@@ -796,6 +859,7 @@ function draw(pts){
   if(mo&&mo.v>0.3){const prm=P().params;ctx.strokeStyle=D.st==='anchored'?'#3ddc84':'rgba(255,107,214,.7)';ctx.lineWidth=lw;ctx.setLineDash([lw*3,lw*3]);ctx.beginPath();ctx.arc(mo.x,mo.y,prm.anchorThr*s,0,7);ctx.stroke();ctx.setLineDash([]);}
   // línea de fuerza en anclaje
   if(D.st==='anchored'){ctx.strokeStyle='rgba(240,180,41,.9)';ctx.lineWidth=lw;ctx.beginPath();ctx.moveTo(Pp[bS.wr].x,Pp[bS.wr].y);const u=sub(Pp[sS.wr],Pp[bS.wr]);ctx.lineTo(Pp[bS.wr].x+u.x*1.5,Pp[bS.wr].y+u.y*1.5);ctx.stroke();}
+  if(T.handPts&&(T.camMode==='gesture'||T.mode==='rating')){ctx.fillStyle='#4fc3ff';for(const q of T.handPts){ctx.beginPath();ctx.arc(q.x*cv.width,q.y*cv.height,lw*2.2,0,7);ctx.fill();}}
   // consejo en vivo durante la puntería
   const now=performance.now();
   if(pts.sample&&now-T.hintT>600){T.hintT=now;const cmp=compare(pts.sample,reference(P().id));const d=cmp&&cmp.devs.find(x=>Math.abs(x.z)>2&&x.k!=='stability');$('#hint').textContent=d?'⚠️ '+devText(d):(cmp?'✅ Como tu referencia':'');}
@@ -804,33 +868,52 @@ function draw(pts){
 
 /* ---- Voz ---- */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null;
+const VCMD={bueno:{l:'Bueno',d:['bueno','buena','bien']},medio:{l:'Medio',d:['medio','regular','mas o menos']},malo:{l:'Malo',d:['malo','mala','mal']},perfecto:{l:'Perfecto',d:['perfecto','perfecta']},
+  siguiente:{l:'Siguiente fase',d:['siguiente','proxima','empezar','comenzar']},tanda:{l:'Siguiente tanda',d:['siguiente tanda','proxima tanda','nueva tanda']},anular:{l:'Anular',d:['anular','cancelar']},
+  pausa:{l:'Pausa',d:['pausa','pausar']},seguir:{l:'Seguir',d:['seguir','continuar','reanudar']},grabar:{l:'Grabar (calibración)',d:['grabar','grabando']},detener:{l:'Detener grabación',d:['detener','parar','cortar']}};
+const VSCORE={X:['equis','x'],10:['diez'],9:['nueve'],8:['ocho'],7:['siete'],6:['seis'],5:['cinco'],4:['cuatro'],3:['tres'],2:['dos'],1:['uno','un'],M:['fuera','afuera','mi','miss','cero']};
+const VKEYS=()=>[...Object.keys(VCMD),...Object.keys(VSCORE).map(k=>'s_'+k)];
+function baseAliases(k){return k.startsWith('s_')?VSCORE[k.slice(2)]:VCMD[k].d;}
+function allAliases(k){const c=P().calib;return[...new Set([...((c.vcustom||{})[k]||[]),...((c.voice||{})[k]||[]),...baseAliases(k)])].filter(Boolean);}
+function primaryWord(k){const c=((P().calib.vcustom||{})[k]||[]);return c[0]||baseAliases(k)[0];}
+const reEsc=s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+function findCmd(t){let best=null;const tt=' '+t+' ';for(const k in VCMD)for(const a of allAliases(k)){if(tt.includes(' '+a+' ')&&(!best||a.length>best.a.length))best={k,a};}return best;}
+function scoreTokens(t){
+  const w=t.split(' ').filter(Boolean);const al=[];
+  for(const k in VSCORE)for(const a of allAliases('s_'+k))al.push({k,a:a.split(' ')});
+  al.sort((x,y)=>y.a.length-x.a.length);const out=[];
+  for(let i=0;i<w.length;){let m=null;for(const x of al){if(x.a.every((q,j)=>w[i+j]===q)){m=x;break;}}
+    if(m){out.push(m.k);i+=m.a.length;}else{if(/^\d+$/.test(w[i]))out.push(w[i]);i++;}}
+  return out.map(k=>k==='X'||k==='M'?k:+k);
+}
 function startVoice(){
   if(!SR){toast('Este navegador no soporta comandos de voz');return;}
   try{rec=new SR();}catch(e){return;}
-  rec.lang='es-AR';rec.continuous=true;rec.interimResults=false;rec.maxAlternatives=1;
-  rec.onresult=e=>{for(let i=e.resultIndex;i<e.results.length;i++)if(e.results[i].isFinal)handleVoice(e.results[i][0].transcript);};
+  rec.lang='es-AR';rec.continuous=true;rec.interimResults=false;rec.maxAlternatives=3;
+  rec.onresult=e=>{for(let i=e.resultIndex;i<e.results.length;i++)if(e.results[i].isFinal)handleVoice([...e.results[i]].map(a=>a.transcript));};
   rec.onerror=e=>{if(e.error==='not-allowed'||e.error==='service-not-allowed'){T.voiceOn=false;toast('Micrófono no permitido: la voz queda desactivada');}};
   rec.onend=()=>{if(T.voiceOn&&T.running)setTimeout(()=>{try{rec.start();}catch(e){}},250);};
   T.voiceOn=true;try{rec.start();}catch(e){}
 }
 function stopVoice(){T.voiceOn=false;try{rec&&rec.stop();}catch(e){}rec=null;}
-const NUMS={cero:'M',fuera:'M',afuera:'M',mi:'M',miss:'M',m:'M',equis:'X',x:'X',diez:10,nueve:9,ocho:8,siete:7,seis:6,cinco:5,cuatro:4,tres:3,dos:2,uno:1,un:1};
-function handleVoice(txt){
+function handleVoice(alts){
   if(performance.now()<T.ignoreVoiceUntil)return;
-  const t=norm(txt).trim();if(!t)return;
-  const w=t.split(/\s+/);
-  if(/siguiente tanda|proxima tanda|nueva tanda/.test(t)){if(T.blocked)A.nextEnd();else A.closeEnd();return;}
-  if(/\b(pausa|pausar)\b/.test(t)){if(!T.paused)A.pause();return;}
-  if(/\b(seguir|continuar|reanudar)\b/.test(t)){if(T.paused)A.pause();return;}
-  if(/\b(anular|cancelar)\b/.test(t)){A.cancelShot();return;}
-  if(/\bperfect[oa]\b/.test(t)){rateLast('perfecto');}
-  else if(/\b(buen[oa]|bien)\b/.test(t)&&!/\bmas o menos\b/.test(t)){rateLast('bueno');}
-  else if(/\b(medio|regular|mas o menos)\b/.test(t)){rateLast('medio');}
-  else if(/\b(mal[oa]?)\b/.test(t)){rateLast('malo');}
-  else if(/\b(siguiente|proxima|empezar|comenzar|fase|ya)\b/.test(t)){A.advance();return;}
+  if(typeof alts==='string')alts=[alts];
+  const list=alts.map(a=>norm(a).replace(/\s+/g,' ').trim()).filter(Boolean);if(!list.length)return;
+  let t=list[0],c=null;for(const x of list){c=findCmd(x);if(c){t=x;break;}}
+  const k=c&&c.k;
+  if(T.camMode==='record'){if(k==='grabar'){recStart();renderCalPanel();}else if(k==='detener'){recStop().then(renderCalPanel);}return;}
+  if(T.camMode!=='train')return;
+  if(k==='tanda'){if(T.blocked)A.nextEnd();else A.closeEnd();return;}
+  if(k==='pausa'){if(!T.paused)A.pause();return;}
+  if(k==='seguir'){if(T.paused)A.pause();return;}
+  if(k==='anular'){A.cancelShot();return;}
+  if(k==='bueno'||k==='medio'||k==='malo'||k==='perfecto')rateLast(k);
+  else if(k==='siguiente'){A.advance();return;}
   if(T.ses&&T.ses.type==='sesion'){
     const sys=SYS[T.ses.cfg.sistema].vals.map(String);
-    for(const x of w){let v=NUMS[x];if(v==null&&/^\d+$/.test(x))v=+x;if(v==null)continue;if(sys.includes(String(v))){setScore(v);}}
+    const rest=c?(' '+t+' ').replace(' '+c.a+' ',' ').trim():t;
+    for(const v of scoreTokens(rest))if(sys.includes(String(v)))setScore(v);
   }
 }
 function say(text){
@@ -838,8 +921,290 @@ function say(text){
   try{const u=new SpeechSynthesisUtterance(text);u.lang='es-AR';u.rate=1.1;u.onend=()=>{T.ignoreVoiceUntil=performance.now()+300;};speechSynthesis.cancel();speechSynthesis.speak(u);T.ignoreVoiceUntil=performance.now()+900;}catch(e){}
 }
 
+/* ========= CALIBRACIÓN ========= */
+const RLBL={bueno:'Bueno',medio:'Medio',malo:'Malo',perfecto:'Perfecto'},RSUG={bueno:'👍',medio:'✋',malo:'👎',perfecto:'✌️'};
+const phSig=p=>p.phases.map(x=>x.name).join('|');
+const labeledCount=p=>DB.recs.filter(r=>r.profileId===p.id).reduce((a,r)=>a+r.shots.length,0);
+function keyIdx(p){const ph=p.phases;let a=ph.findIndex(x=>x.event==='anclaje');if(a<0)a=ph.findIndex(x=>/anclaj|punter/i.test(x.name));let r=ph.findIndex(x=>x.event==='suelta');if(r<0)r=ph.findIndex(x=>/suelt|liber/i.test(x.name));if(r<0)r=ph.length-1;if(a<0)a=Math.max(0,r-1);return{a,r};}
+
+/* ---- Detector calibrado (clasificador por fase + avance ordenado) ---- */
+function newModelState(){return{c:0,cnt:0,first:0,rest:0};}
+let M=newModelState();
+function activeModel(p){const m=p.calib&&p.calib.model;return(p.params.useModel!==false&&m&&m.sig===phSig(p))?m:null;}
+function nbLL(m,f){const out=[];for(let c=0;c<m.K;c++){const mu=m.mean[c],v=m.vr[c];let s=0;for(let i=0;i<f.length;i++){const d=f[i]-mu[i];s+=-0.5*d*d/v[i]-0.5*Math.log(v[i]);}out.push(s/f.length);}return out;}
+function modelStep(m,f,t,geo){
+  const ll=nbLL(m,f),K=m.K,n=K-2,c=M.c;
+  if(c===K-1){if(ll[0]>=ll[K-1]){if(++M.cnt>=5){M.c=0;M.cnt=0;}}else M.cnt=0;return;}
+  let nx=c+1;if(c>=1&&c+2<=K-1&&ll[c+2]>ll[c+1]+0.5&&ll[c+2]>ll[c]+0.5)nx=c+2;
+  if(ll[nx]>ll[c]){if(!M.cnt)M.first=t;M.cnt++;const need=c===0?4:2;
+    if(M.cnt>=need){const t0=M.first;M.cnt=0;M.rest=0;M.c=nx;for(let j=c+1;j<=nx;j++)modelEnter(j,t0,geo,n);return;}}
+  else M.cnt=0;
+  if(c>=1){let mx=0;for(let i=1;i<K;i++)if(ll[i]>ll[mx])mx=i;
+    if(mx===0){if(++M.rest>=12){M.rest=0;M.cnt=0;
+      if(c===n){M.c=K-1;modelEnter(K-1,t,geo,n);}
+      else{M.c=0;D=Object.assign(newDetector(),{prevSw:D.prevSw,prevBw:D.prevBw,prevT:D.prevT});emit('abort',t);}}}
+    else M.rest=0;}
+}
+function modelEnter(j,t,geo,n){
+  const k=keyIdx(P());
+  if(j===n+1){if(D.st==='released'&&!D.relFeat)D.relFeat=relFeatures(geo.sw,geo.bw);emit('fin',t);D.st='idle';return;}
+  const pi=j-1;
+  if(pi===k.a){D.st='anchored';D.anchorT=t;D.samples=[];D.thumbDone=false;D.lastAnchSw=null;}
+  if(pi===k.r){const u0=sub(geo.sw,geo.bw),L=len(u0)||1;D.st='released';D.relT=t;D.relRef={sw:D.lastAnchSw||{x:geo.sw.x,y:geo.sw.y},bw:{x:geo.bw.x,y:geo.bw.y},u:D.lastU||{x:u0.x/L,y:u0.y/L},n:D.lastN||{x:0,y:1},s:geo.s};D.relFeat=null;}
+  emit('phase',t,pi);
+}
+
+/* ---- Grabación ---- */
+const FR=199;
+function packFrame(t,lm,wl){const a=new Float32Array(FR);a[0]=t;for(let i=0;i<33;i++){a[1+i*3]=lm[i].x;a[2+i*3]=lm[i].y;a[3+i*3]=lm[i].visibility??1;}if(wl)for(let i=0;i<33;i++){a[100+i*3]=wl[i].x;a[101+i*3]=wl[i].y;a[102+i*3]=wl[i].z;}return a;}
+function frameAt(F,k){const o=k*FR,lm=[],wl=[];for(let i=0;i<33;i++){lm.push({x:F[o+1+i*3],y:F[o+2+i*3],visibility:F[o+3+i*3]});wl.push({x:F[o+100+i*3],y:F[o+101+i*3],z:F[o+102+i*3]});}return{t:F[o],lm,wl};}
+A.startRecord=()=>{T.camMode='record';T.rec=null;T.retry=()=>A.startRecord();openCam();};
+function recStart(){
+  if(T.rec&&T.rec.on)return;if(!T.stream)return;
+  let mime='',mr=null;
+  if(window.MediaRecorder){mime=['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'].find(m=>{try{return MediaRecorder.isTypeSupported(m)}catch(e){return false}})||'';
+    try{mr=new MediaRecorder(T.stream,mime?{mimeType:mime,videoBitsPerSecond:1500000}:{videoBitsPerSecond:1500000});}catch(e){mr=null;}}
+  T.rec={on:true,t0:performance.now(),frames:[],chunks:[],mr,mime:mr?(mr.mimeType||mime):''};
+  if(mr){mr.ondataavailable=e=>{if(e.data&&e.data.size)T.rec.chunks.push(e.data);};mr.onstart=()=>{T.rec.t0=performance.now();T.rec.frames=[];};try{mr.start(1000);}catch(e){T.rec.mr=null;}}
+  say('Grabando');
+}
+async function recStop(){
+  const r=T.rec;if(!r||!r.on)return;r.on=false;
+  let blob=null;
+  if(r.mr){await new Promise(res=>{r.mr.onstop=res;try{r.mr.stop();}catch(e){res();}setTimeout(res,3000);});if(r.chunks.length)blob=new Blob(r.chunks,{type:(r.mime||'video/webm').split(';')[0]});}
+  const n=r.frames.length;
+  if(n<15){toast('Grabación muy corta o sin cuerpo detectado: no se guardó');return;}
+  const F=new Float32Array(n*FR);r.frames.forEach((f,i)=>F.set(f,i*FR));
+  const id=uid();
+  let ok=await idbPut('rec',id,{video:blob,frames:F,n});
+  if(!ok&&blob){blob=null;ok=await idbPut('rec',id,{video:null,frames:F,n});if(ok)toast('Sin espacio para el video: se guardó solo el esqueleto',3500);}
+  if(!ok){toast('⚠️ No se pudo guardar la grabación');return;}
+  DB.recs.push({id,profileId:P().id,date:Date.now(),dur:r.frames[n-1][0],w:vid.videoWidth,h:vid.videoHeight,mirror:vid.classList.contains('mirror'),hasVideo:!!blob,shots:[]});
+  save();say('Grabación guardada');toast('💾 Grabación guardada');
+  if($('#train').hidden&&curView.v==='calib')render();
+}
+A.recToggle=()=>{if(T.rec&&T.rec.on)recStop().then(renderCalPanel);else recStart();renderCalPanel();};
+A.delRec=id=>askConfirm('¿Borrar esta grabación y sus tiros etiquetados?',()=>{idbDel('rec',id);DB.recs=DB.recs.filter(r=>r.id!==id);save();render();});
+function renderCalPanel(){
+  const el=$('#calPanel');if(!el)return;
+  if(T.camMode==='record'){const on=T.rec&&T.rec.on;
+    el.innerHTML=`<div class="row"><b>${on?'⏺ Grabando…':'Grabación para calibrar fases'}</b></div>
+    <button class="btn ${on?'danger':'pri'}" style="width:100%;padding:16px;margin:8px 0;font-size:18px" data-a="recToggle">${on?'⏹ Detener':'⏺ Grabar'}</button>
+    <div class="mut">Decí <b>"${h(primaryWord('grabar'))}"</b> para empezar y <b>"${h(primaryWord('detener'))}"</b> para terminar. Podés hacer varios tiros en una misma grabación (5 a 10 está bien). Tiros etiquetados en el perfil: <b>${labeledCount(P())}</b>/10.</div>
+    <button class="btn sm" style="margin-top:8px" data-a="exitTrain">Terminar e ir a etiquetar</button>`;}
+  else if(T.camMode==='gesture'&&T.gcal){const g=T.gcal,key=g.list[g.i];if(!key)return;
+    el.innerHTML=`<b>Gesto para «${RLBL[key]}» (${g.i+1}/${g.list.length})</b><div style="font-size:26px;margin:6px 0;letter-spacing:4px">${'●'.repeat(g.samples.length)}${'○'.repeat(g.need-g.samples.length)}</div>
+    <div class="mut">Mostrá la mano con el gesto que quieras usar (sugerido ${RSUG[key]}) y mantenela quieta 1 segundo. Cuando suene el aviso, bajala y repetí.</div>
+    <div class="row" style="margin-top:8px"><button class="btn sm" data-a="exitTrain">Cancelar</button></div>`;}
+}
+
+/* ---- Gestos ---- */
+function handVec(l,hd){const w=l[0],m=l[9];const sc=Math.hypot(m.x-w.x,m.y-w.y)||1;const fl=hd==='Left'?-1:1;const v=[];for(let i=1;i<21;i++)v.push(fl*(l[i].x-w.x)/sc,(l[i].y-w.y)/sc);return v;}
+const vdist=(a,b)=>{let s=0;for(let i=0;i<a.length;i++)s+=(a[i]-b[i])**2;return Math.sqrt(s/a.length);};
+function gestClassify(v){const G=P().calib.gestures||{};let best=null,bd=1e9;for(const r in G)for(const s of G[r]||[]){const d=vdist(v,s);if(d<bd){bd=d;best=r;}}return best&&bd<(P().calib.gThr||0.35)?best:null;}
+function computeGThr(){const G=P().calib.gestures;const ds=[];for(const k in G){const a=G[k]||[];for(let i=0;i<a.length;i++){let m=1e9;for(let j=0;j<a.length;j++)if(i!==j)m=Math.min(m,vdist(a[i],a[j]));if(m<1e9)ds.push(m);}}ds.sort((a,b)=>a-b);const med=ds.length?ds[Math.floor(ds.length/2)]:0.1;P().calib.gThr=+Math.max(0.25,med*3).toFixed(3);}
+A.gestCal=r=>{const list=r==='all'?['bueno','medio','malo','perfecto']:[r];T.gcal={list,i:0,samples:[],need:5,stable:0,prev:null,gone:true,goneSince:0,cool:0};T.camMode='gesture';T.retry=()=>A.gestCal(r);openCam();};
+A.gestClear=r=>{delete P().calib.gestures[r];computeGThr();save();render();};
+function gestCalStep(now){
+  const g=T.gcal;if(!g||!T.gest||!g.list[g.i])return;
+  let r;try{r=T.gest.recognizeForVideo(vid,now);}catch(e){return;}
+  const l=r&&r.landmarks&&r.landmarks[0];T.handPts=l||null;
+  if(!l){if(!g.goneSince)g.goneSince=now;if(now-g.goneSince>300)g.gone=true;g.prev=null;g.stable=0;return;}
+  g.goneSince=0;if(!g.gone||now<g.cool)return;
+  const hd=r.handedness&&r.handedness[0]&&r.handedness[0][0]&&r.handedness[0][0].categoryName;const v=handVec(l,hd);
+  if(g.prev&&vdist(v,g.prev)<0.12){if(!g.stable)g.stable=now;
+    if(now-g.stable>700){g.samples.push(v.map(x=>+x.toFixed(3)));g.gone=false;g.cool=now+800;g.stable=0;
+      if(g.samples.length>=g.need){const key=g.list[g.i];P().calib.gestures[key]=g.samples;computeGThr();save();g.i++;g.samples=[];
+        if(g.i>=g.list.length){say('Gestos calibrados');toast('✅ Gestos calibrados');T.gcal.list=[];setTimeout(()=>history.back(),900);return;}
+        say('Ahora, '+RLBL[g.list[g.i]]);}
+      else say(String(g.samples.length));
+      renderCalPanel();}}
+  else g.stable=0;
+  g.prev=v;
+}
+
+/* ---- Voz ---- */
+A.voiceCal=which=>{
+  if(!SR)return toast('Este navegador no soporta reconocimiento de voz');
+  const keys=which==='scores'?Object.keys(VSCORE).map(k=>'s_'+k):which&&which!=='cmds'?[which]:Object.keys(VCMD);
+  T.vc={keys,i:0,rep:0,reps:3,heard:[]};
+  const o=document.createElement('div');o.className='ov';o.id='vcOv';document.body.appendChild(o);vcListen();
+};
+function vcLabel(k){return k.startsWith('s_')?'Puntaje '+k.slice(2):VCMD[k].l;}
+function vcRender(st){const v=T.vc;if(!v)return;const k=v.keys[v.i];const o=$('#vcOv');if(!o||!k)return;
+  o.innerHTML=`<div class="card"><div class="mut">Calibración de voz · comando ${v.i+1} de ${v.keys.length}</div><h2>Decí: «${h(primaryWord(k))}»</h2>
+  <div class="mut">${h(vcLabel(k))} · vez ${v.rep+1} de ${v.reps}</div><div style="font-size:44px;text-align:center;margin:10px">${st==='ok'?'✅':'🎙️'}</div>
+  <div class="mut">Escuché: ${v.heard.map(x=>'«'+h(x)+'»').join(' ')||'—'}</div>
+  <div class="row" style="margin-top:12px"><button class="btn" data-a="vcSkip">Saltar</button><div class="sp"></div><button class="btn danger" data-a="vcEnd">Terminar</button></div></div>`;}
+function vcListen(){
+  const v=T.vc;if(!v)return;let r;try{r=new SR();}catch(e){return;}
+  T.vcRec=r;r.lang='es-AR';r.continuous=false;r.interimResults=false;r.maxAlternatives=5;let got=false;
+  r.onresult=e=>{got=true;vcAdd([...e.results[0]].map(a=>norm(a.transcript).replace(/\s+/g,' ').trim()).filter(Boolean));};
+  r.onerror=e=>{if(e.error==='not-allowed'||e.error==='service-not-allowed'){toast('Micrófono no permitido');A.vcEnd();}};
+  r.onend=()=>{if(!T.vc||T.vcRec!==r)return;
+    if(got){v.rep++;if(v.rep>=v.reps){v.i++;v.rep=0;v.heard=[];if(v.i>=v.keys.length){A.vcEnd(true);return;}}vcRender('ok');setTimeout(vcListen,600);}
+    else setTimeout(vcListen,300);};
+  vcRender('listen');try{r.start();}catch(e){}
+}
+function vcAdd(alts){
+  const v=T.vc,k=v.keys[v.i],c=P().calib;c.voice=c.voice||{};
+  const taken=a=>VKEYS().some(o=>o!==k&&allAliases(o).includes(a));
+  let added=0;for(const a of alts.slice(0,3)){if(taken(a))continue;const l=(c.voice[k]=c.voice[k]||[]);if(!l.includes(a)&&!baseAliases(k).includes(a)){l.push(a);if(l.length>15)l.shift();}added++;}
+  v.heard.push((alts[0]||'?')+(added?'':' ⚠️ se parece a otro comando'));save();
+}
+A.vcSkip=()=>{const v=T.vc;if(!v)return;v.i++;v.rep=0;v.heard=[];if(v.i>=v.keys.length)return A.vcEnd(true);const r=T.vcRec;T.vcRec=null;try{r&&r.abort();}catch(e){}vcListen();};
+A.vcEnd=done=>{const r=T.vcRec;T.vc=null;T.vcRec=null;try{r&&r.abort();}catch(e){}const o=$('#vcOv');if(o)o.remove();if(done===true)toast('✅ Voz calibrada');render();};
+A.vcClear=k=>{const c=P().calib;if(c.voice)delete c.voice[k];save();render();};
+
+/* ---- Entrenamiento del detector ---- */
+A.trainModel=async()=>{
+  const p=P();const recs=DB.recs.filter(r=>r.profileId===p.id&&r.shots.length);
+  const nShots=recs.reduce((a,r)=>a+r.shots.length,0);
+  if(nShots<3)return toast('Etiquetá al menos 3 tiros (ideal 10 o más)');
+  toast('🧠 Entrenando…',6000);
+  const n=p.phases.length,K=n+2,X=Array.from({length:K},()=>[]),k=keyIdx(p),adA=[],peaks=[];
+  const bS=SIDE[p.bowHand],sS=SIDE[p.bowHand==='L'?'R':'L'];
+  for(const r of recs){
+    const d=await idbGet('rec',r.id);if(!d)continue;
+    const F=d.frames,N=d.n,W=r.w||640,H=r.h||480,sm=[];let pSw=null,pBw=null,pT=0;
+    const feats=new Array(N),times=new Float32Array(N),spd=new Float32Array(N);
+    for(let i=0;i<N;i++){const fr=frameAt(F,i);smoothInto(sm,fr.lm,W,H,0.65);const{s}=torsoScale(sm);
+      const rsw={x:fr.lm[sS.wr].x*W,y:fr.lm[sS.wr].y*H},rbw={x:fr.lm[bS.wr].x*W,y:fr.lm[bS.wr].y*H};let sp=0,sb=0;
+      if(pSw&&fr.t>pT){const dt=(fr.t-pT)/1000;sp=dist(rsw,pSw)/s/dt;sb=dist(rbw,pBw)/s/dt;}pSw=rsw;pBw=rbw;pT=fr.t;
+      const si=sm[sS.ix],mo=dist(si,sm[9])<dist(si,sm[10])?sm[9]:sm[10];
+      feats[i]=featVec(sm,bS,sS,s,mo,sp,sb);times[i]=fr.t;spd[i]=sp;}
+    const inShot=new Uint8Array(N);
+    for(const sh of r.shots){if(sh.marks.length!==n)continue;const m=sh.marks;let pk=0;
+      for(let i=0;i<N;i++){const t=times[i];let c=-1;
+        if(t<m[0]){if(t>m[0]-2000)c=0;}else if(t>=sh.end){if(t<sh.end+1500)c=K-1;}else{c=1;for(let j=0;j<n;j++)if(t>=m[j])c=j+1;}
+        if(c>=0){X[c].push(feats[i]);inShot[i]=1;}
+        if(c===k.a+1)adA.push(feats[i][10]);
+        if(Math.abs(t-m[k.r])<200)pk=Math.max(pk,spd[i]);}
+      if(pk)peaks.push(pk);}
+    for(let i=0;i<N;i+=3)if(!inShot[i])X[0].push(feats[i]);
+  }
+  const dim=(X.find(a=>a.length)||[[]])[0].length;if(!dim)return toast('No se pudieron leer las grabaciones');
+  const empty=X.findIndex(a=>a.length<3);
+  if(empty>=0)return toast('Faltan cuadros para «'+(empty===0?'reposo':empty===K-1?'fin del tiro':p.phases[empty-1].name)+'». Etiquetá más tiros.',4000);
+  const mean_=[],vr=[];
+  for(const a of X){const mu=new Array(dim).fill(0),v=new Array(dim).fill(0);for(const f of a)for(let i=0;i<dim;i++)mu[i]+=f[i]/a.length;for(const f of a)for(let i=0;i<dim;i++)v[i]+=(f[i]-mu[i])**2/a.length;
+    mean_.push(mu.map(x=>+x.toFixed(4)));vr.push(v.map(x=>+Math.max(x,0.004).toFixed(5)));}
+  p.calib.model={K,mean:mean_,vr,n:nShots,date:Date.now(),sig:phSig(p),frames:X.map(a=>a.length)};
+  if(adA.length>10){adA.sort((a,b)=>a-b);p.params.anchorThr=+Math.min(0.8,Math.max(0.15,adA[Math.floor(adA.length*0.9)]*1.25)).toFixed(2);}
+  if(peaks.length>=2){peaks.sort((a,b)=>a-b);p.params.releaseSpeed=+Math.min(8,Math.max(1,peaks[Math.floor(peaks.length/2)]*0.5)).toFixed(1);}
+  p.params.useModel=true;save();render();toast(`✅ Detector calibrado con ${nShots} tiros`,3500);
+};
+
+/* ---- Vista de calibración ---- */
+VIEWS.calib=()=>{
+  const p=P(),c=p.calib,recs=DB.recs.filter(r=>r.profileId===p.id).sort((a,b)=>b.date-a.date),nl=labeledCount(p),m=c.model;
+  const sigOk=m&&m.sig===phSig(p);
+  return `${back('profile')}<h1>Calibración · ${h(p.name)}</h1>
+  <div class="card"><b>1. Fases del tiro</b>
+  <div class="mut">Grabá tus tiros, marcá en cada video el momento en que empieza cada fase y el fin del tiro, y la app aprende cómo se ve tu cuerpo en cada fase. Se guardan los puntos del cuerpo de entrada y salida de cada fase.</div>
+  <div class="row" style="margin:10px 0"><div class="sp"><div class="bar"><i style="left:0;width:${Math.min(100,nl*10)}%"></i></div></div><b>${nl}/10</b><span class="mut">tiros etiquetados</span></div>
+  <button class="btn pri" data-a="startRecord">⏺ Grabar tiros</button>
+  ${recs.length?`<div style="margin-top:10px">${recs.map(r=>`<div class="list-item"><div class="sp"><b>${fdate(r.date)}</b><div class="mut">${fx(r.dur/1000,0)} s · ${r.shots.length} tiros etiquetados${r.hasVideo?'':' · solo esqueleto'}</div></div><button class="btn sm pri" data-a="go" data-v="label" data-arg="${r.id}">Etiquetar</button><button class="btn sm danger" data-a="delRec" data-v="${r.id}">🗑</button></div>`).join('')}</div>`:''}
+  <div style="margin-top:10px"><button class="btn" data-a="trainModel" ${nl<3?'disabled style="opacity:.5"':''}>🧠 Entrenar detector con mis tiros</button></div>
+  ${m?`<div class="mut" style="margin-top:8px">${sigOk?`✅ Detector calibrado con ${m.n} tiros (${fdate(m.date)}).`:'⚠️ Cambiaste las fases después de entrenar: volvé a etiquetar y entrenar.'}</div>
+  <div class="chk"><input type="checkbox" data-c="pp" data-k="useModel"${p.params.useModel!==false?' checked':''}>Usar el detector calibrado (si no, se usa la detección básica)</div>`:''}
+  </div>
+  <div class="card"><b>2. Voz</b>
+  <div class="mut">Repetís cada comando 3 veces y la app guarda cómo lo entiende el reconocedor de tu celu con tu voz y tu forma de hablar. También podés escribir tus propias palabras (separadas por coma).</div>
+  <div class="row" style="margin:10px 0"><button class="btn pri" data-a="voiceCal" data-v="cmds">🎙 Calibrar comandos</button><button class="btn" data-a="voiceCal" data-v="scores">🎯 Calibrar puntajes</button></div>
+  <table>${VKEYS().map(k=>{const l=(c.voice||{})[k]||[];return `<tr><td><b>${h(vcLabel(k))}</b><div class="mut" style="font-size:12px">${l.length?'Aprendido: '+l.map(h).join(', '):'Sin calibrar'}</div></td>
+   <td style="width:42%"><input data-c="vcustom" data-k="${k}" placeholder="${h(baseAliases(k)[0])}" value="${h(((c.vcustom||{})[k]||[]).join(', '))}"></td>
+   <td style="white-space:nowrap"><button class="btn sm" data-a="voiceCal" data-v="${k}">🎙</button>${l.length?`<button class="btn sm" data-a="vcClear" data-v="${k}">✕</button>`:''}</td></tr>`}).join('')}</table>
+  </div>
+  <div class="card"><b>3. Gestos para calificar</b>
+  <div class="mut">Mostrás 5 veces cada gesto a la cámara. Podés usar el que quieras; los que no calibres usan el gesto sugerido.</div>
+  <button class="btn pri" style="margin:10px 0" data-a="gestCal" data-v="all">✋ Calibrar los 4 gestos</button>
+  ${Object.keys(RLBL).map(r=>{const n=((c.gestures||{})[r]||[]).length;return `<div class="list-item"><span style="font-size:22px">${RSUG[r]}</span><div class="sp"><b>${RLBL[r]}</b><div class="mut">${n?n+' muestras guardadas':'Usa el gesto sugerido'}</div></div><button class="btn sm" data-a="gestCal" data-v="${r}">Grabar</button>${n?`<button class="btn sm" data-a="gestClear" data-v="${r}">✕</button>`:''}</div>`}).join('')}
+  </div>`;
+};
+
+/* ---- Etiquetado de grabaciones ---- */
+let L=null;
+VIEWS.label=id=>{
+  const r=DB.recs.find(x=>x.id===id);if(!r)return VIEWS.calib();
+  setTimeout(()=>initLabel(r),0);
+  return `${back('calib')}<h1>Etiquetar tiros</h1>
+  <div class="mut">Mové la barra hasta el cuadro exacto en que empieza cada fase y tocá «Marcar». Al final marcá el fin del tiro y guardalo. Repetí con cada tiro de la grabación.</div>
+  <div class="lab" style="aspect-ratio:${r.w||4}/${r.h||3}"><video id="lv" playsinline muted preload="auto"></video><canvas id="lc"></canvas></div>
+  <input type="range" id="lr" min="0" max="${Math.round(r.dur)}" step="1" value="0" data-c="lseek" style="padding:0;margin:10px 0">
+  <div class="row" style="justify-content:space-between"><button class="btn sm" data-a="lstep" data-v="-500">−½ s</button><button class="btn sm" data-a="lstep" data-v="-1">◀ cuadro</button><button class="btn sm pri" data-a="lplay" id="lpb">▶</button><button class="btn sm" data-a="lstep" data-v="1">cuadro ▶</button><button class="btn sm" data-a="lstep" data-v="500">+½ s</button></div>
+  <div class="row" style="margin-top:6px"><b id="lt">0,00 s</b><span class="mut" id="lmet"></span></div>
+  <div class="card" id="lshot"></div><div id="lsaved"></div>`;
+};
+async function initLabel(r){
+  const d=await idbGet('rec',r.id);if(!d){toast('No se encontró la grabación en este celu');return;}
+  if(L&&L.url)URL.revokeObjectURL(L.url);
+  L={r,F:d.frames,n:d.n,times:new Float32Array(d.n),t:0,shot:newLabShot(),playing:false,url:null};
+  for(let k=0;k<d.n;k++)L.times[k]=d.frames[k*FR];
+  const v=$('#lv'),c=$('#lc');if(!c)return;c.width=r.w||640;c.height=r.h||480;
+  if(r.mirror){v.classList.add('mirror');c.classList.add('mirror');}
+  if(d.video){L.url=URL.createObjectURL(d.video);v.src=L.url;v.onloadeddata=()=>labSeek(L.t);v.onerror=()=>{v.remove();labDraw();};}else v.remove();
+  renderLabShot();labSeek(0);
+}
+function newLabShot(){return{id:null,marks:new Array(P().phases.length).fill(null),end:null};}
+function nearestFrame(t){const a=L.times;let lo=0,hi=L.n-1;while(lo<hi){const m=(lo+hi)>>1;if(a[m]<t)lo=m+1;else hi=m;}if(lo>0&&Math.abs(a[lo-1]-t)<Math.abs(a[lo]-t))lo--;return lo;}
+function labSeek(t,fromVideo){
+  if(!L)return;L.t=Math.max(0,Math.min(t,L.r.dur));
+  const r=$('#lr');if(r)r.value=L.t;const lt=$('#lt');if(lt)lt.textContent=fx(L.t/1000,2)+' s';
+  const v=$('#lv');if(v&&!fromVideo&&v.readyState>=1){try{v.currentTime=L.t/1000;}catch(e){}}
+  labDraw();
+}
+function labDraw(){
+  const c=$('#lc');if(!c||!L)return;const x=c.getContext('2d');x.clearRect(0,0,c.width,c.height);
+  if(!$('#lv')){x.fillStyle='#111';x.fillRect(0,0,c.width,c.height);}
+  const fr=frameAt(L.F,nearestFrame(L.t));drawSk(x,fr.lm,c.width,c.height,P());
+  const p=P(),bS=SIDE[p.bowHand],sS=SIDE[p.bowHand==='L'?'R':'L'],W=c.width,H=c.height;
+  const q=fr.lm.map(o=>({x:o.x*W,y:o.y*H,v:o.visibility}));const{s}=torsoScale(q);const si=q[sS.ix],sw=q[sS.wr];
+  const mo=dist(si,q[9])<dist(si,q[10])?q[9]:q[10];
+  const k=nearestFrame(L.t);let sp=0;if(k>0){const a=frameAt(L.F,k-1).lm[sS.wr],dt=(L.times[k]-L.times[k-1])/1000;if(dt>0)sp=dist({x:a.x*W,y:a.y*H},sw)/s/dt;}
+  const m=$('#lmet');if(m)m.textContent=` · mano–comisura ${fx(Math.min(dist(si,mo),dist(sw,mo))/s,2)} · vel. mano cuerda ${fx(sp,1)}`;
+}
+function drawSk(x,lm,W,H,p){
+  const bS=SIDE[p.bowHand],sS=SIDE[p.bowHand==='L'?'R':'L'];const bowSet=new Set([bS.sh,bS.el,bS.wr,bS.ix]),strSet=new Set([sS.sh,sS.el,sS.wr,sS.ix]);const lw=Math.max(2,W/320);x.lineCap='round';
+  for(const[a,b]of CONN){if(lm[a].visibility<0.3||lm[b].visibility<0.3)continue;x.strokeStyle=bowSet.has(a)&&bowSet.has(b)?'#3ddc84':strSet.has(a)&&strSet.has(b)?'#ff9f43':'rgba(255,255,255,.6)';x.lineWidth=lw*1.6;x.beginPath();x.moveTo(lm[a].x*W,lm[a].y*H);x.lineTo(lm[b].x*W,lm[b].y*H);x.stroke();}
+  const dp=(i,c,r)=>{x.fillStyle=c;x.beginPath();x.arc(lm[i].x*W,lm[i].y*H,r,0,7);x.fill();};
+  dp(bS.wr,'#3ddc84',lw*4);dp(sS.wr,'#ff9f43',lw*4);dp(9,'#ff6bd6',lw*2.5);dp(10,'#ff6bd6',lw*2.5);
+}
+function renderLabShot(){
+  if(!L)return;const ph=P().phases,s=L.shot;const el=$('#lshot');if(!el)return;
+  const row=(lbl,val,key)=>`<div class="row" style="margin:6px 0"><span class="sp">${lbl}</span><span class="mut">${val!=null?fx(val/1000,2)+' s':'—'}</span>${val!=null?`<button class="btn sm" data-a="lgo" data-v="${val}">Ir</button>`:''}<button class="btn sm pri" data-a="lmark" data-v="${key}">Marcar</button></div>`;
+  el.innerHTML=`<b>${s.id?'Editando tiro':'Tiro nuevo'}</b>${ph.map((p,i)=>row(`${i+1}. Inicio de ${h(p.name)}`,s.marks[i],i)).join('')}${row('🏁 Fin del tiro',s.end,'end')}
+  <div class="row" style="margin-top:8px"><button class="btn sm" data-a="lclear">Limpiar</button><div class="sp"></div><button class="btn pri" data-a="lsave">💾 Guardar tiro</button></div>`;
+  const sv=$('#lsaved');if(sv)sv.innerHTML=L.r.shots.length?`<h3>Tiros etiquetados en esta grabación (${L.r.shots.length})</h3><div class="card" style="padding:0">${L.r.shots.map((x,i)=>`<div class="list-item"><div class="sp"><b>Tiro ${i+1}</b><div class="mut">desde ${fx(x.marks[0]/1000,1)} s · dura ${fx((x.end-x.marks[0])/1000,1)} s</div></div><button class="btn sm" data-a="ledit" data-v="${x.id}">Editar</button><button class="btn sm danger" data-a="ldel" data-v="${x.id}">🗑</button></div>`).join('')}</div>
+  <div class="mut" style="margin-top:6px">Total en el perfil: ${labeledCount(P())}/10 tiros.</div>`:'';
+}
+A.lstep=v=>{if(!L)return;v=+v;if(Math.abs(v)===1){const k=Math.max(0,Math.min(L.n-1,nearestFrame(L.t)+v));labSeek(L.times[k]);}else labSeek(L.t+v);};
+A.lgo=v=>labSeek(+v);
+A.lplay=()=>{if(!L)return;const v=$('#lv'),b=$('#lpb');
+  if(L.playing){L.playing=false;if(v)v.pause();b.textContent='▶';return;}
+  L.playing=true;b.textContent='⏸';let last=performance.now();
+  if(v){v.currentTime=L.t/1000;v.play().catch(()=>{});}
+  const tick=()=>{if(!L||!L.playing||!$('#lc'))return;const now=performance.now();
+    if(v&&!v.paused)labSeek(v.currentTime*1000,true);else if(!v)labSeek(L.t+(now-last));last=now;
+    if(L.t>=L.r.dur||(v&&v.ended)){L.playing=false;$('#lpb').textContent='▶';return;}requestAnimationFrame(tick);};
+  requestAnimationFrame(tick);};
+A.lmark=k=>{if(!L)return;if(k==='end')L.shot.end=L.t;else L.shot.marks[+k]=L.t;renderLabShot();};
+A.lclear=()=>{L.shot=newLabShot();renderLabShot();};
+A.ledit=id=>{const s=L.r.shots.find(x=>x.id===id);if(!s)return;L.shot={id:s.id,marks:[...s.marks],end:s.end};while(L.shot.marks.length<P().phases.length)L.shot.marks.push(null);L.shot.marks.length=P().phases.length;renderLabShot();labSeek(s.marks[0]);};
+A.ldel=id=>{L.r.shots=L.r.shots.filter(x=>x.id!==id);save();renderLabShot();};
+A.lsave=()=>{
+  const s=L.shot;if(s.marks.some(x=>x==null)||s.end==null)return toast('Marcá el inicio de todas las fases y el fin del tiro');
+  const all=[...s.marks,s.end];for(let i=1;i<all.length;i++)if(all[i]<=all[i-1])return toast('Las marcas tienen que ir en orden de tiempo');
+  const pk=t=>frameAt(L.F,nearestFrame(t)).lm.map(o=>[+o.x.toFixed(4),+o.y.toFixed(4),+o.visibility.toFixed(2)]);
+  const pts=s.marks.map((t,i)=>({fase:P().phases[i].name,entrada:pk(t),salida:pk(i<s.marks.length-1?s.marks[i+1]:s.end)}));
+  const shot={id:s.id||uid(),marks:[...s.marks],end:s.end,sig:phSig(P()),pts};
+  L.r.shots=L.r.shots.filter(x=>x.id!==shot.id);L.r.shots.push(shot);L.r.shots.sort((a,b)=>a.marks[0]-b.marks[0]);
+  save();L.shot=newLabShot();renderLabShot();const n=labeledCount(P());toast(`✔ Tiro guardado · ${n}/10${n>=10?' — ¡ya podés entrenar!':''}`);
+};
+
 /* ========= INICIO ========= */
 idbOpen();
+try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}catch(e){}
 try{history.replaceState({v:'home'},'');}catch(e){}
 render();
 </script>
