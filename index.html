@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#0d1117">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Arquero · Análisis de tiro</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--card2:#1f2630;--tx:#e6edf3;--mut:#8b949e;--acc:#f0b429;--bow:#3ddc84;--str:#ff9f43;--bad:#ff5c5c;--mid:#f7d154;--good:#3ddc84;--line:#30363d}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+#view{padding:14px 14px 80px;max-width:760px;margin:0 auto}
+h1{font-size:22px;margin:6px 0 2px}h2{font-size:18px;margin:18px 0 8px}h3{font-size:15px;margin:14px 0 6px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+.mut{color:var(--mut);font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:10px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.big{display:flex;flex-direction:column;gap:4px;padding:16px;border-radius:14px;background:var(--card);border:1px solid var(--line);color:var(--tx);text-align:left;font-size:16px;font-weight:600}
+.big small{font-weight:400;color:var(--mut);font-size:13px}
+.big.pri{background:linear-gradient(135deg,#3a2c05,#5a4310);border-color:#7a5a12}
+button{font:inherit;color:inherit;cursor:pointer}
+.btn{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-weight:600}
+.btn.pri{background:var(--acc);color:#1a1300;border-color:var(--acc)}
+.btn.danger{background:#3a1414;border-color:#6b2020;color:#ffb3b3}
+.btn.sm{padding:6px 10px;font-size:14px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.sp{flex:1}
+label.f{display:block;margin:10px 0 4px;font-size:14px;color:var(--mut)}
+input,select{font:inherit;color:var(--tx);background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:10px;width:100%}
+input[type=checkbox]{width:auto;transform:scale(1.3);margin-right:8px}
+.chk{display:flex;align-items:center;margin:10px 0}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--mut);font-weight:500}
+.tag{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:600;background:var(--card2)}
+.r-bueno{background:#123d25;color:#7ff0ad}.r-medio{background:#3d3512;color:#f7e08a}.r-malo{background:#3d1212;color:#ff9b9b}
+.list-item{display:flex;align-items:center;gap:10px;padding:12px;border-bottom:1px solid var(--line)}
+.list-item:last-child{border-bottom:0}
+.bar{height:8px;border-radius:4px;background:var(--card2);position:relative;overflow:hidden;min-width:60px}
+.bar i{position:absolute;top:0;bottom:0;background:var(--acc)}
+.phase-ed{display:grid;grid-template-columns:1fr 1fr auto;gap:6px;align-items:center;margin:6px 0}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#000c;border:1px solid var(--line);padding:10px 16px;border-radius:12px;z-index:99;max-width:90vw;text-align:center;font-size:15px;pointer-events:none;transition:opacity .3s}
+/* ENTRENAMIENTO */
+#train{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;z-index:10}
+#train[hidden]{display:none}
+.stage{position:relative;flex:1;min-height:0}
+.stage video,.stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.mirror{transform:scaleX(-1)}
+.hud{position:absolute;left:0;right:0;top:0;padding:8px;display:flex;gap:8px;align-items:flex-start;pointer-events:none}
+.hud>*{pointer-events:auto}
+.hud .ph{background:#000a;border-radius:12px;padding:6px 12px;flex:1;min-width:0}
+.hud .ph b{display:block;font-size:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hud .ph span{font-size:13px;color:#ccc}
+.timer{font-variant-numeric:tabular-nums;font-size:30px;font-weight:700;background:#000a;border-radius:12px;padding:4px 12px}
+.ibtn{background:#000a;border:1px solid #fff3;border-radius:12px;width:46px;height:46px;font-size:20px;display:flex;align-items:center;justify-content:center}
+.chips{position:absolute;left:8px;top:66px;display:flex;flex-direction:column;gap:4px;pointer-events:none}
+.chip{background:#000a;border-radius:99px;padding:2px 10px;font-size:12px}
+.chip.on{color:#7ff0ad}.chip.off{color:#ff9b9b}
+.hint{position:absolute;left:50%;top:70px;transform:translateX(-50%);background:#000b;border-radius:12px;padding:6px 14px;font-size:16px;font-weight:600;max-width:80%;text-align:center}
+.hint:empty{display:none}
+.phasebar{position:absolute;right:8px;top:66px;display:flex;flex-direction:column;gap:3px;align-items:flex-end;pointer-events:none}
+.phasebar div{background:#000a;border-radius:8px;padding:2px 8px;font-size:12px;font-variant-numeric:tabular-nums;color:#bbb}
+.phasebar div.cur{color:#1a1300;background:var(--acc);font-weight:700}
+.prompt{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);background:#000c;border:1px solid var(--acc);border-radius:14px;padding:8px 14px;text-align:center;font-size:15px}
+.prompt:empty{display:none}
+.panel{background:var(--bg);border-top:1px solid var(--line);padding:8px;max-height:52vh;overflow:auto}
+.rate{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.rate button{border-radius:12px;padding:12px 4px;font-weight:700;border:1px solid var(--line);background:var(--card2);font-size:15px}
+.rate .b{color:#7ff0ad}.rate .m{color:#f7e08a}.rate .x{color:#ff9b9b}.rate .p{color:var(--acc)}
+.ctl{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:6px;margin-top:6px}
+.ctl button{border-radius:12px;padding:10px 4px;border:1px solid var(--line);background:var(--card2);font-size:14px;font-weight:600}
+.ctl .adv{background:var(--acc);color:#1a1300;border-color:var(--acc)}
+.end{margin-bottom:6px}
+.cells{display:flex;gap:4px;flex-wrap:wrap;margin:4px 0}
+.cell{min-width:40px;height:40px;border-radius:8px;border:1px solid var(--line);background:var(--card);display:flex;align-items:center;justify-content:center;font-weight:700;position:relative;font-size:16px}
+.cell.sel{outline:2px solid var(--acc)}
+.cell .dot{position:absolute;top:2px;right:3px;width:7px;height:7px;border-radius:50%}
+.keys{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
+.keys button{padding:10px 0;border-radius:8px;border:1px solid var(--line);background:var(--card2);font-weight:700;font-size:16px}
+.last{font-size:13px;color:var(--mut);margin-top:6px}
+@media (orientation:landscape) and (max-height:540px){
+ #train{flex-direction:row}
+ .panel{width:330px;max-height:none;border-top:0;border-left:1px solid var(--line)}
+}
+.ov{position:fixed;inset:0;background:#000c;z-index:50;display:flex;align-items:center;justify-content:center;padding:16px}
+.ov .card{max-width:480px;width:100%;max-height:90vh;overflow:auto}
+.thumb{width:100%;border-radius:10px;background:#000}
+.kv{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:14px}
+</style>
+</head>
+<body>
+<div id="view"></div>
+
+<div id="train" hidden>
+  <div class="stage" id="stage">
+    <video id="vid" playsinline muted autoplay></video>
+    <canvas id="cv"></canvas>
+    <div class="hud">
+      <button class="ibtn" data-a="exitTrain" title="Salir">✕</button>
+      <div class="ph"><b id="hPhase">Iniciando…</b><span id="hSub"></span></div>
+      <div class="timer" id="hTimer">0,0</div>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="phasebar" id="phasebar"></div>
+    <div class="hint" id="hint"></div>
+    <div class="prompt" id="prompt"></div>
+  </div>
+  <div class="panel" id="panel">
+    <div id="endPanel"></div>
+    <div class="rate">
+      <button class="b" data-a="rate" data-v="bueno">👍 Bueno</button>
+      <button class="m" data-a="rate" data-v="medio">✋ Medio</button>
+      <button class="x" data-a="rate" data-v="malo">👎 Malo</button>
+      <button class="p" data-a="rate" data-v="perfecto">⭐ Perfecto</button>
+    </div>
+    <div class="ctl">
+      <button class="adv" data-a="advance" id="advBtn">▶ Fase</button>
+      <button data-a="pause" id="pauseBtn">⏸ Pausa</button>
+      <button data-a="cancelShot">✖ Anular</button>
+      <button data-a="flipCam">🔄 Cám.</button>
+    </div>
+    <div class="last" id="lastShot"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ========= UTILIDADES ========= */
+const $=(s,r=document)=>r.querySelector(s);
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const h=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fx=(x,d=1)=>x==null||!isFinite(x)?'–':(+x).toFixed(d).replace('.',',');
+const secs=ms=>fx(ms/1000,1)+' s';
+const mean=a=>a.reduce((s,x)=>s+x,0)/a.length;
+const std=a=>{if(a.length<2)return 0;const m=mean(a);return Math.sqrt(a.reduce((s,x)=>s+(x-m)**2,0)/(a.length-1));};
+const norm=t=>t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9ñ ]/g,' ');
+const fdate=t=>new Date(t).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+let toastT;function toast(m,ms=2200){let e=$('#toast');if(!e){e=document.createElement('div');e.id='toast';e.className='toast';document.body.appendChild(e);}e.textContent=m;e.style.opacity=1;clearTimeout(toastT);toastT=setTimeout(()=>e.style.opacity=0,ms);}
+
+/* ========= CONSTANTES ========= */
+const EVENTS={manual:'Manual (botón ▶ o voz "siguiente")',levantar:'Automático: al levantar el arco',apertura:'Automático: al iniciar la apertura',anclaje:'Automático: al llegar al anclaje',suelta:'Automático: en la suelta'};
+const SYS={
+  x10:{l:'X, 10 a 1',vals:['X',10,9,8,7,6,5,4,3,2,1,'M'],x:10},
+  n10:{l:'10 a 1',vals:[10,9,8,7,6,5,4,3,2,1,'M'],x:10},
+  x5:{l:'X, 5, 4, 3, 2, 1 (Gota / Ata)',vals:['X',5,4,3,2,1,'M'],x:5},
+  n5:{l:'5 a 1',vals:[5,4,3,2,1,'M'],x:5},
+  x6:{l:'X, 6 a 1 (campo)',vals:['X',6,5,4,3,2,1,'M'],x:6}
+};
+const TARGETS=[
+  {id:'wa122',l:'WA 10 anillos · 122 cm',d:122,s:'x10'},
+  {id:'wa80',l:'WA 10 anillos · 80 cm',d:80,s:'x10'},
+  {id:'wa60',l:'WA 10 anillos · 60 cm',d:60,s:'x10'},
+  {id:'wa40',l:'WA 10 anillos · 40 cm',d:40,s:'x10'},
+  {id:'wa80r',l:'WA 80 cm reducida (5 a X)',d:80,s:'x10'},
+  {id:'triple',l:'Triple vertical 40 cm',d:40,s:'x10'},
+  {id:'gota',l:'Gota / Ata',d:40,s:'x5'},
+  {id:'campo',l:'Campo (Field)',d:80,s:'x6'},
+  {id:'3d',l:'3D',d:0,s:'n10'},
+  {id:'otro',l:'Otro / personalizado',d:0,s:'n10'}
+];
+const FEAT={
+  bowElbow:{l:'Ángulo del codo de arco',u:'°',f:3,d:0},
+  drawElbow:{l:'Ángulo del codo de cuerda',u:'°',f:4,d:0},
+  elbowLine:{l:'Codo de cuerda respecto a la línea de flecha',u:'',f:3,d:1,pos:'más bajo',neg:'más alto'},
+  shoulderTilt:{l:'Hombro de arco (altura)',u:'°',f:2,d:1,pos:'más levantado',neg:'más bajo'},
+  torsoLean:{l:'Inclinación del torso',u:'°',f:2,d:1,pos:'más hacia el blanco',neg:'más hacia atrás'},
+  headTilt:{l:'Inclinación de la cabeza',u:'°',f:2.5,d:1},
+  anchorDx:{l:'Anclaje (adelante/atrás de la comisura)',u:'',f:2,d:1,pos:'más atrás',neg:'más adelante'},
+  anchorDy:{l:'Anclaje (arriba/abajo de la comisura)',u:'',f:2,d:1,pos:'más abajo',neg:'más arriba'},
+  stability:{l:'Movimiento durante la puntería',u:'',f:0.6,d:2,pos:'más movimiento',neg:'más quieto'},
+  releaseBack:{l:'Recorrido de la mano de cuerda en la suelta',u:'',f:4,d:0,pos:'más largo',neg:'más corto'},
+  releaseDev:{l:'Desvío de la mano de cuerda en la suelta',u:'',f:3,d:1,pos:'más hacia abajo',neg:'más hacia arriba'},
+  bowDrop:{l:'Reacción del brazo de arco tras la suelta',u:'',f:3,d:1,pos:'cae más',neg:'sube más'},
+  aim:{l:'Tiempo de anclaje / puntería',u:'s',f:0.4,d:2,pos:'más largo',neg:'más corto'},
+  total:{l:'Tiempo total del tiro',u:'s',f:0.6,d:2,pos:'más largo',neg:'más corto'}
+};
+/* Índices de MediaPipe Pose por lado (izq = lado izquierdo del arquero) */
+const SIDE={L:{sh:11,el:13,wr:15,ix:19,mo:9,eye:2,hip:23},R:{sh:12,el:14,wr:16,ix:20,mo:10,eye:5,hip:24}};
+const CONN=[[11,12],[11,23],[12,24],[23,24],[11,13],[13,15],[12,14],[14,16],[15,19],[16,20],[15,21],[16,22],[23,25],[25,27],[24,26],[26,28],[9,10]];
+
+/* ========= DATOS ========= */
+const LS='arquero_v1';
+function defaultPhases(){return[{name:'Elevación',event:'levantar'},{name:'Apertura',event:'apertura'},{name:'Anclaje y puntería',event:'anclaje'},{name:'Suelta y seguimiento',event:'suelta'}];}
+function newProfile(name){return{id:uid(),name,bowHand:'L',autoRoles:true,autoDetect:true,phases:defaultPhases(),
+  params:{anchorThr:0.35,raiseThr:0.45,releaseSpeed:2.5,followMs:1500,ratingTimeout:12,model:'full',camera:'environment',voice:true,gestures:true,speak:true}};}
+function seed(){const p=newProfile('Mi perfil');return{v:1,profiles:[p],activeProfileId:p.id,sessions:[],shots:[]};}
+function load(){try{const d=JSON.parse(localStorage.getItem(LS));if(d&&d.profiles&&d.profiles.length)return d;}catch(e){}return seed();}
+let DB=load();
+function save(){try{localStorage.setItem(LS,JSON.stringify(DB));}catch(e){toast('⚠️ No se pudo guardar: almacenamiento lleno o bloqueado');}}
+const P=()=>DB.profiles.find(p=>p.id===DB.activeProfileId)||DB.profiles[0];
+const shotById=id=>DB.shots.find(s=>s.id===id);
+const sesById=id=>DB.sessions.find(s=>s.id===id);
+
+/* Miniaturas en IndexedDB */
+let idb=null;
+function idbOpen(){return new Promise(res=>{try{const r=indexedDB.open('arquero_img',1);r.onupgradeneeded=()=>r.result.createObjectStore('t');r.onsuccess=()=>{idb=r.result;res(idb)};r.onerror=()=>res(null);}catch(e){res(null)}});}
+async function putThumb(id,data){if(!idb)await idbOpen();if(!idb)return;try{idb.transaction('t','readwrite').objectStore('t').put(data,id);}catch(e){}}
+async function getThumb(id){if(!idb)await idbOpen();if(!idb)return null;return new Promise(res=>{try{const r=idb.transaction('t').objectStore('t').get(id);r.onsuccess=()=>res(r.result||null);r.onerror=()=>res(null);}catch(e){res(null)}});}
+async function delThumb(id){if(!idb)await idbOpen();if(!idb)return;try{idb.transaction('t','readwrite').objectStore('t').delete(id);}catch(e){}}
+
+/* ========= REFERENCIA (tiros perfectos) ========= */
+function reference(pid){
+  const ps=DB.shots.filter(s=>s.profileId===pid&&s.perfect&&s.features);
+  const ref={n:ps.length,f:null};
+  if(ps.length<2)return ref;
+  ref.f={};
+  for(const k in FEAT){const v=ps.map(s=>s.features[k]).filter(x=>x!=null&&isFinite(x));if(v.length<2)continue;ref.f[k]={m:mean(v),sd:Math.max(std(v),FEAT[k].f)};}
+  return ref;
+}
+function compare(feat,ref){
+  if(!ref||!ref.f||!feat)return null;
+  const devs=[];let sum=0,n=0;
+  for(const k in ref.f){const v=feat[k];if(v==null||!isFinite(v))continue;const z=(v-ref.f[k].m)/ref.f[k].sd;devs.push({k,z,v,m:ref.f[k].m});sum+=Math.min(z*z,25);n++;}
+  if(!n)return null;
+  const rms=Math.sqrt(sum/n);
+  devs.sort((a,b)=>Math.abs(b.z)-Math.abs(a.z));
+  return{sim:Math.round(100*Math.exp(-rms*rms/8)),devs};
+}
+function devText(d){
+  const F=FEAT[d.k],diff=d.v-d.m,dir=diff>0?(F.pos||'mayor'):(F.neg||'menor');
+  const amt=F.u==='°'?fx(Math.abs(diff),0)+'°':F.u==='s'?fx(Math.abs(diff),1)+' s':'';
+  return `${F.l}: ${dir}${amt?' ('+amt+')':''}`;
+}
+
+/* ========= NAVEGACIÓN ========= */
+let curView={v:'home'};
+function nav(v,arg,replace){curView={v,arg};const st={v,arg};try{replace?history.replaceState(st,''):history.pushState(st,'');}catch(e){}render();}
+window.addEventListener('popstate',e=>{if(!$('#train').hidden){stopTrain();}curView=e.state||{v:'home'};render();});
+function render(){
+  $('#train').hidden=true;$('#view').hidden=false;
+  const f=VIEWS[curView.v]||VIEWS.home;$('#view').innerHTML=f(curView.arg);window.scrollTo(0,0);
+}
+const back=(to='home')=>`<button class="btn sm" data-a="go" data-v="${to}">← Volver</button>`;
+
+/* ========= VISTAS ========= */
+const VIEWS={};
+VIEWS.home=()=>{
+  const p=P(),ref=reference(p.id);
+  const open=DB.sessions.filter(s=>s.type==='sesion'&&!s.done&&s.profileId===p.id).sort((a,b)=>b.date-a.date)[0];
+  const nShots=DB.shots.filter(s=>s.profileId===p.id).length;
+  return `<h1>🏹 Arquero</h1><div class="mut">Análisis de tiro con la cámara</div>
+  <div class="card row"><div><div class="mut">Perfil activo</div><b>${h(p.name)}</b> · mano de arco ${p.bowHand==='L'?'izquierda':'derecha'}</div><div class="sp"></div><button class="btn sm" data-a="go" data-v="profiles">Cambiar</button></div>
+  <div class="grid">
+    <button class="big pri" data-a="newSession">🎯 Nueva sesión<small>Tandas, flechas, blanco y puntaje</small></button>
+    <button class="big" data-a="freePractice">📹 Práctica libre<small>Solo análisis, sin puntaje</small></button>
+    ${open?`<button class="big" data-a="resume" data-v="${open.id}">⏯ Continuar sesión<small>${h(open.name)} · tanda ${open.curEnd+1}/${open.cfg.tandas}</small></button>`:''}
+    <button class="big" data-a="go" data-v="history">📚 Historial<small>${DB.sessions.filter(s=>s.profileId===p.id).length} sesiones · ${nShots} tiros</small></button>
+    <button class="big" data-a="go" data-v="profile">⚙️ Perfil y fases<small>${p.phases.length} fases configuradas</small></button>
+    <button class="big" data-a="go" data-v="stats">📊 Estadísticas<small>Qué hace bueno a tu tiro</small></button>
+    <button class="big" data-a="go" data-v="help">❓ Ayuda<small>Cámara, voz y gestos</small></button>
+  </div>
+  <div class="card"><b>⭐ Tu tiro perfecto</b><div class="mut">${ref.n} tiro(s) marcados como perfectos. ${ref.n<2?'Marcá al menos 2 (ideal 10 o más) para que la app compare cada tiro con tu referencia.':'La app ya compara cada tiro con tu referencia.'}</div></div>`;
+};
+VIEWS.help=()=>`${back()}<h1>Ayuda</h1>
+<div class="card"><b>📱 Dónde poner el celu</b><ul class="mut">
+<li>En un trípode a 3–5 m, a la altura del pecho, <b>de frente a vos</b> (perpendicular a la línea de tiro), así se ven los dos brazos, la cara y la cadera.</li>
+<li>Mejor en horizontal. Tenés que entrar entero de cadera para arriba, con el brazo de arco extendido.</li>
+<li>Buena luz y fondo poco recargado. Evitá contraluz.</li>
+<li>La pantalla se mantiene encendida mientras entrenás.</li></ul></div>
+<div class="card"><b>🎙️ Comandos de voz</b><div class="mut">
+<b>bueno / medio / malo / perfecto</b> — califican el último tiro<br>
+<b>siguiente</b> — avanza fase manual · <b>siguiente tanda</b><br>
+<b>anular</b> — descarta el tiro en curso · <b>pausa</b> / <b>seguir</b><br>
+<b>equis, diez, nueve … uno, fuera</b> — cargan el puntaje de la flecha seleccionada (podés decir varios: "diez nueve nueve")</div></div>
+<div class="card"><b>✋ Gestos (después de cada tiro)</b><div class="mut">Mantené el gesto frente a la cámara ~1 segundo:<br>👍 pulgar arriba = bueno · ✋ palma abierta = medio · 👎 pulgar abajo = malo · ✌️ V = perfecto</div></div>
+<div class="card"><b>⏱️ Cómo detecta las fases</b><div class="mut">
+<b>Levantar:</b> la muñeca de arco sube cerca de la altura del hombro.<br>
+<b>Apertura:</b> la mano de cuerda empieza a acercarse a la cara.<br>
+<b>Anclaje:</b> la mano de cuerda queda quieta junto a la comisura de la boca.<br>
+<b>Suelta:</b> la mano de cuerda sale rápido del anclaje.<br>
+<b>Fin:</b> bajás el arco o pasa el tiempo de seguimiento.<br>
+Si bajás sin soltar se registra como <b>bajada</b> (no cuenta como tiro). Podés ajustar la sensibilidad en tu perfil, o poner fases en modo manual.</div></div>
+<div class="card"><b>💾 Tus datos</b><div class="mut">Todo se guarda en este navegador del celu. Usá Exportar en el perfil para hacer copias de seguridad.</div></div>`;
+
+VIEWS.profiles=()=>`${back()}<h1>Perfiles</h1>
+<div class="card">${DB.profiles.map(p=>`<div class="list-item"><div class="sp"><b>${h(p.name)}</b><div class="mut">${DB.shots.filter(s=>s.profileId===p.id).length} tiros · ${DB.shots.filter(s=>s.profileId===p.id&&s.perfect).length} perfectos</div></div>
+${p.id===DB.activeProfileId?'<span class="tag r-bueno">Activo</span>':`<button class="btn sm" data-a="setProfile" data-v="${p.id}">Usar</button>`}</div>`).join('')}</div>
+<button class="btn pri" data-a="addProfile">+ Nuevo perfil</button>`;
+
+VIEWS.profile=()=>{
+  const p=P(),pr=p.params,ref=reference(p.id);
+  return `${back()}<h1>Perfil: ${h(p.name)}</h1>
+  <div class="card">
+  <label class="f">Nombre</label><input data-c="pf" data-k="name" value="${h(p.name)}">
+  <label class="f">Mano de arco</label><select data-c="pf" data-k="bowHand"><option value="L"${p.bowHand==='L'?' selected':''}>Izquierda (arquero diestro)</option><option value="R"${p.bowHand==='R'?' selected':''}>Derecha (arquero zurdo)</option></select>
+  <div class="chk"><input type="checkbox" data-c="pf" data-k="autoRoles"${p.autoRoles?' checked':''}>Corregir automáticamente si la cámara confunde los brazos</div>
+  <div class="chk"><input type="checkbox" data-c="pf" data-k="autoDetect"${p.autoDetect?' checked':''}>Detectar fases automáticamente</div>
+  </div>
+  <h2>Fases del tiro</h2><div class="mut">Cada fase empieza con un evento. El tiempo de cada fase dura hasta que empieza la siguiente; la última termina al bajar el arco.</div>
+  <div class="card">${p.phases.map((ph,i)=>`<div class="phase-ed"><input data-c="phn" data-i="${i}" value="${h(ph.name)}"><select data-c="phe" data-i="${i}">${Object.entries(EVENTS).map(([k,l])=>`<option value="${k}"${ph.event===k?' selected':''}>${l}</option>`).join('')}</select>
+  <div class="row" style="flex-wrap:nowrap"><button class="btn sm" data-a="phUp" data-v="${i}">↑</button><button class="btn sm danger" data-a="phDel" data-v="${i}">✕</button></div></div>`).join('')}
+  <div class="row" style="margin-top:8px"><button class="btn sm" data-a="phAdd">+ Agregar fase</button><button class="btn sm" data-a="phReset">Restaurar predeterminadas</button></div></div>
+  <h2>Sensibilidad de la detección</h2><div class="card">
+  ${num('anchorThr','Distancia de anclaje a la comisura (× largo del torso)',pr.anchorThr,0.1,0.8,0.05)}
+  ${num('raiseThr','Altura para "arco levantado" (muñeca bajo el hombro, × torso)',pr.raiseThr,0.1,1,0.05)}
+  ${num('releaseSpeed','Velocidad para detectar la suelta (torsos/seg)',pr.releaseSpeed,1,8,0.5)}
+  ${num('followMs','Tiempo máximo de seguimiento tras la suelta (ms)',pr.followMs,500,5000,100)}
+  ${num('ratingTimeout','Segundos para calificar con gesto/voz',pr.ratingTimeout,3,60,1)}
+  <label class="f">Modelo de detección</label><select data-c="pp" data-k="model"><option value="full"${pr.model==='full'?' selected':''}>Preciso (recomendado)</option><option value="lite"${pr.model==='lite'?' selected':''}>Rápido (celulares más viejos)</option><option value="heavy"${pr.model==='heavy'?' selected':''}>Máxima precisión (lento)</option></select>
+  <label class="f">Cámara</label><select data-c="pp" data-k="camera"><option value="environment"${pr.camera==='environment'?' selected':''}>Trasera</option><option value="user"${pr.camera==='user'?' selected':''}>Frontal</option></select>
+  <div class="chk"><input type="checkbox" data-c="pp" data-k="voice"${pr.voice?' checked':''}>Comandos de voz</div>
+  <div class="chk"><input type="checkbox" data-c="pp" data-k="gestures"${pr.gestures?' checked':''}>Calificar con gestos de la mano</div>
+  <div class="chk"><input type="checkbox" data-c="pp" data-k="speak"${pr.speak?' checked':''}>Avisos hablados</div>
+  </div>
+  <h2>⭐ Referencia de tiro perfecto</h2><div class="card">
+  <div class="mut">${ref.n} tiro(s) perfectos.${ref.n<2?' Se necesitan al menos 2.':''}</div>
+  ${ref.f?`<table><tr><th>Parámetro</th><th>Tu referencia</th></tr>${Object.entries(ref.f).map(([k,v])=>`<tr><td>${FEAT[k].l}</td><td>${fmtF(k,v.m)} <span class="mut">± ${fmtF(k,v.sd)}</span></td></tr>`).join('')}</table>`:''}
+  </div>
+  <h2>Datos</h2><div class="card row">
+  <button class="btn" data-a="exportData">⬇️ Exportar</button>
+  <label class="btn" style="display:inline-block">⬆️ Importar<input type="file" accept=".json,application/json" data-c="importData" hidden></label>
+  ${DB.profiles.length>1?'<button class="btn danger" data-a="delProfile">Borrar perfil</button>':''}
+  </div>`;
+};
+function num(k,l,v,min,max,step){return `<label class="f">${l}</label><input type="number" data-c="pp" data-k="${k}" value="${v}" min="${min}" max="${max}" step="${step}" inputmode="decimal">`;}
+function fmtF(k,v){const F=FEAT[k];return fx(v,F.d)+(F.u&&F.u!==''?(F.u==='s'?' s':F.u):'');}
+
+VIEWS.newSession=()=>{
+  const last=DB.sessions.filter(s=>s.type==='sesion').sort((a,b)=>b.date-a.date)[0];
+  const c=last?{...last.cfg}:{tandas:6,flechas:6,blanco:'wa122',distancia:70,diametro:122,sistema:'x10',xValor:10};
+  window._nc=c;
+  return `${back()}<h1>Nueva sesión</h1><div class="card">
+  <label class="f">Nombre</label><input id="ns_name" value="Práctica ${new Date().toLocaleDateString('es-AR')}">
+  <div class="grid"><div><label class="f">Cantidad de tandas</label><input type="number" id="ns_tandas" value="${c.tandas}" min="1" max="60" inputmode="numeric"></div>
+  <div><label class="f">Flechas por tanda</label><input type="number" id="ns_flechas" value="${c.flechas}" min="1" max="24" inputmode="numeric"></div></div>
+  <label class="f">Tipo de blanco</label><select id="ns_blanco" data-c="nsTarget">${TARGETS.map(t=>`<option value="${t.id}"${c.blanco===t.id?' selected':''}>${t.l}</option>`).join('')}</select>
+  <div class="grid"><div><label class="f">Distancia (m)</label><input type="number" id="ns_dist" value="${c.distancia}" min="1" max="150" inputmode="decimal"></div>
+  <div><label class="f">Tamaño de la diana (cm)</label><input type="number" id="ns_diam" value="${c.diametro}" min="0" max="200" inputmode="decimal"></div></div>
+  <label class="f">Sistema de puntuación</label><select id="ns_sys" data-c="nsSys">${Object.entries(SYS).map(([k,s])=>`<option value="${k}"${c.sistema===k?' selected':''}>${s.l}</option>`).join('')}</select>
+  <label class="f">Valor de la X (puntos)</label><input type="number" id="ns_x" value="${c.xValor}" min="0" max="20" inputmode="numeric">
+  </div><button class="btn pri" style="width:100%;padding:14px" data-a="startSession">Comenzar sesión 🏹</button>`;
+};
+
+VIEWS.history=()=>{
+  const p=P();const ss=DB.sessions.filter(s=>s.profileId===p.id).sort((a,b)=>b.date-a.date);
+  return `${back()}<h1>Historial</h1>${ss.length?`<div class="card" style="padding:0">${ss.map(s=>{const t=sesTotals(s);const n=DB.shots.filter(x=>x.sessionId===s.id).length;
+  return `<div class="list-item" data-a="go" data-v="session" data-arg="${s.id}"><div class="sp"><b>${h(s.name)}</b><div class="mut">${fdate(s.date)} · ${s.type==='libre'?'Práctica libre':`${s.cfg.distancia} m · ${h(tLabel(s.cfg.blanco))}`} · ${n} tiros</div></div>${s.type==='sesion'?`<b>${t.pts}<span class="mut">/${t.max}</span></b>`:''}</div>`}).join('')}</div>`:'<div class="card mut">Todavía no hay sesiones.</div>'}`;
+};
+const tLabel=id=>(TARGETS.find(t=>t.id===id)||{l:id}).l;
+function pts(v,cfg){if(v==='X')return +cfg.xValor;if(v==='M'||v==null||v==='')return 0;return +v;}
+function sesTotals(s){
+  if(s.type!=='sesion')return{pts:0,max:0,x:0,top:0,ends:[]};
+  const sys=SYS[s.cfg.sistema],top=Math.max(...sys.vals.filter(v=>v!=='M').map(v=>pts(v,s.cfg)));
+  let P_=0,X=0,T=0,arrows=0;const ends=s.ends.map(e=>{let t=0;for(const c of e){if(c.score!=null){t+=pts(c.score,s.cfg);arrows++;if(c.score==='X')X++;if(pts(c.score,s.cfg)===top&&c.score!=='X')T++;}}P_+=t;return t;});
+  return{pts:P_,max:s.cfg.tandas*s.cfg.flechas*top,x:X,top:T,ends,arrows,avg:arrows?P_/arrows:0};
+}
+VIEWS.session=id=>{
+  const s=sesById(id);if(!s)return VIEWS.history();
+  const shots=DB.shots.filter(x=>x.sessionId===s.id).sort((a,b)=>a.t-b.t);
+  const t=sesTotals(s);let run=0;
+  return `${back('history')}<h1>${h(s.name)}</h1><div class="mut">${fdate(s.date)}${s.type==='sesion'?` · ${s.cfg.distancia} m · ${h(tLabel(s.cfg.blanco))}${s.cfg.diametro?` ${s.cfg.diametro} cm`:''} · ${SYS[s.cfg.sistema].l}`:' · Práctica libre'}</div>
+  ${s.type==='sesion'?`<div class="card"><div class="row"><div><div class="mut">Total</div><b style="font-size:26px">${t.pts}</b><span class="mut"> / ${t.max}</span></div><div class="sp"></div><div class="kv"><span class="mut">X</span><b>${t.x}</b><span class="mut">Máx. (sin X)</span><b>${t.top}</b><span class="mut">Promedio/flecha</span><b>${fx(t.avg,2)}</b><span class="mut">Bajadas</span><b>${s.letdowns||0}</b></div></div>
+  <table style="margin-top:8px"><tr><th>Tanda</th><th>Flechas</th><th>Suma</th><th>Acum.</th></tr>${s.ends.map((e,i)=>{run+=t.ends[i];return `<tr><td>${i+1}</td><td>${e.map(c=>c.score??'·').join(' ')}</td><td><b>${t.ends[i]}</b></td><td>${run}</td></tr>`}).join('')}</table>
+  ${!s.done?`<button class="btn pri" style="margin-top:10px" data-a="resume" data-v="${s.id}">Continuar sesión</button>`:''}</div>`:''}
+  <h2>Tiros (${shots.length})</h2>${shotList(shots)}
+  ${statsBlock(shots)}
+  <button class="btn danger" data-a="delSession" data-v="${s.id}">Borrar sesión</button>`;
+};
+function shotList(shots){
+  if(!shots.length)return '<div class="card mut">Sin tiros registrados.</div>';
+  return `<div class="card" style="padding:0">${shots.map((s,i)=>`<div class="list-item" data-a="go" data-v="shot" data-arg="${s.id}">
+  <div style="width:26px" class="mut">${i+1}</div><div class="sp"><b>${secs(s.total)}</b> <span class="mut">· puntería ${s.features&&s.features.aim!=null?fx(s.features.aim,1)+' s':'–'}</span>${s.score!=null?` · <b>${s.score}</b>`:''}
+  <div>${s.rating?`<span class="tag r-${s.rating}">${s.rating}</span> `:''}${s.perfect?'⭐ ':''}${s.similarity!=null?`<span class="mut">similitud ${s.similarity}%</span>`:''}</div></div><span class="mut">›</span></div>`).join('')}</div>`;
+}
+function statsBlock(shots){
+  const ok=shots.filter(s=>s.total);if(ok.length<2)return '';
+  const by=r=>ok.filter(s=>s.rating===r);
+  const row=(lbl,arr)=>arr.length?`<tr><td>${lbl}</td><td>${arr.length}</td><td>${secs(mean(arr.map(s=>s.total)))}</td><td>${fx(mean(arr.filter(s=>s.features&&s.features.aim!=null).map(s=>s.features.aim))||NaN,1)} s</td><td>${arr.some(s=>s.similarity!=null)?Math.round(mean(arr.filter(s=>s.similarity!=null).map(s=>s.similarity)))+'%':'–'}</td></tr>`:'';
+  const phs={};ok.forEach(s=>(s.phases||[]).forEach(p=>{if(p.dur!=null)(phs[p.name]=phs[p.name]||[]).push(p.dur)}));
+  let diff='';const g=by('bueno').filter(s=>s.features),b=by('malo').filter(s=>s.features);
+  if(g.length>=3&&b.length>=3){
+    const ds=[];for(const k in FEAT){const a=g.map(s=>s.features[k]).filter(isFinite),c=b.map(s=>s.features[k]).filter(isFinite);if(a.length<3||c.length<3)continue;const sd=Math.max(Math.sqrt((std(a)**2+std(c)**2)/2),FEAT[k].f);ds.push({k,d:(mean(c)-mean(a))/sd,ma:mean(a),mc:mean(c)});}
+    ds.sort((x,y)=>Math.abs(y.d)-Math.abs(x.d));
+    diff=`<h3>Qué diferencia tus tiros malos de los buenos</h3><table><tr><th>Parámetro</th><th>Buenos</th><th>Malos</th></tr>${ds.slice(0,5).map(x=>`<tr><td>${FEAT[x.k].l}</td><td>${fmtF(x.k,x.ma)}</td><td>${fmtF(x.k,x.mc)}</td></tr>`).join('')}</table>`;
+  }
+  return `<h2>Resumen</h2><div class="card"><table><tr><th></th><th>n</th><th>Total</th><th>Puntería</th><th>Simil.</th></tr>${row('Todos',ok)}${row('👍 Buenos',by('bueno'))}${row('✋ Medios',by('medio'))}${row('👎 Malos',by('malo'))}${row('⭐ Perfectos',ok.filter(s=>s.perfect))}</table>
+  <h3>Duración promedio por fase</h3><table>${Object.entries(phs).map(([n,a])=>`<tr><td>${h(n)}</td><td>${secs(mean(a))}</td><td class="mut">± ${fx(std(a)/1000,1)} s</td></tr>`).join('')}</table>${diff}</div>`;
+}
+VIEWS.stats=()=>{const p=P();const shots=DB.shots.filter(s=>s.profileId===p.id).sort((a,b)=>a.t-b.t);
+  return `${back()}<h1>Estadísticas · ${h(p.name)}</h1><div class="mut">${shots.length} tiros registrados</div>${statsBlock(shots)||'<div class="card mut">Registrá algunos tiros para ver estadísticas. Calificalos como bueno, medio o malo para que la app encuentre qué los diferencia.</div>'}
+  <h2>Últimos tiros</h2>${shotList(shots.slice(-30).reverse())}`;};
+VIEWS.shot=id=>{
+  const s=shotById(id);if(!s)return VIEWS.history();
+  const ref=reference(s.profileId),cmp=compare(s.features,ref);
+  setTimeout(async()=>{const d=await getThumb(s.id);const im=$('#thumbImg');if(im){if(d){im.src=d;}else im.remove();}},0);
+  return `${back()}<h1>Tiro · ${fdate(s.t)}</h1>
+  <img id="thumbImg" class="thumb" alt="">
+  <div class="card"><div class="row"><div><div class="mut">Tiempo total</div><b style="font-size:26px">${secs(s.total)}</b></div><div class="sp"></div>${s.score!=null?`<div><div class="mut">Puntaje</div><b style="font-size:26px">${s.score}</b></div>`:''}${cmp?`<div><div class="mut">Similitud</div><b style="font-size:26px">${cmp.sim}%</b></div>`:''}</div>
+  <div class="rate" style="margin-top:10px">${['bueno','medio','malo'].map(r=>`<button data-a="rateShot" data-v="${r}" data-arg="${s.id}" class="${r==='bueno'?'b':r==='medio'?'m':'x'}" style="${s.rating===r?'outline:2px solid currentColor':''}">${r}</button>`).join('')}<button class="p" data-a="togglePerfect" data-v="${s.id}" style="${s.perfect?'outline:2px solid currentColor':''}">⭐ ${s.perfect?'Perfecto':'Marcar'}</button></div></div>
+  <h3>Fases</h3><div class="card"><table>${(s.phases||[]).map(p=>`<tr><td>${h(p.name)}</td><td>${p.dur!=null?secs(p.dur):'<span class="mut">no detectada</span>'}</td></tr>`).join('')}<tr><td><b>Total</b></td><td><b>${secs(s.total)}</b></td></tr></table></div>
+  ${s.features?`<h3>Postura y movimiento ${cmp?'vs. tu referencia':''}</h3><div class="card"><table>${Object.keys(FEAT).filter(k=>s.features[k]!=null&&isFinite(s.features[k])).map(k=>{const r=ref.f&&ref.f[k];const z=r?(s.features[k]-r.m)/r.sd:null;
+   return `<tr><td>${FEAT[k].l}</td><td>${fmtF(k,s.features[k])}${r?`<div class="mut">ref ${fmtF(k,r.m)}</div>`:''}</td><td style="width:70px">${z!=null?zbar(z):''}</td></tr>`}).join('')}</table>
+   ${cmp?`<h3>Principales diferencias</h3><div class="mut">${cmp.devs.filter(d=>Math.abs(d.z)>1.5).slice(0,4).map(devText).join('<br>')||'Muy parecido a tu tiro perfecto 👌'}</div>`:'<div class="mut">Marcá al menos 2 tiros perfectos para comparar.</div>'}
+   <div class="mut" style="margin-top:8px">Valores sin unidad: % del largo del torso.</div></div>`:'<div class="card mut">No se pudieron medir datos de postura en este tiro.</div>'}
+  <button class="btn danger" data-a="delShot" data-v="${s.id}">Borrar tiro</button>`;
+};
+function zbar(z){const c=Math.min(Math.abs(z),3)/3;const col=Math.abs(z)<1.5?'var(--good)':Math.abs(z)<2.5?'var(--mid)':'var(--bad)';
+  return `<div class="bar"><i style="left:${z<0?50-c*50:50}%;width:${c*50}%;background:${col}"></i><i style="left:50%;width:1px;background:#fff6"></i></div>`;}
+
+/* ========= ACCIONES ========= */
+const A={};
+A.go=(v,el)=>nav(v,el.dataset.arg);
+A.setProfile=id=>{DB.activeProfileId=id;save();nav('home',null,true);};
+A.addProfile=()=>{const p=newProfile('Perfil '+(DB.profiles.length+1));DB.profiles.push(p);DB.activeProfileId=p.id;save();nav('profile');};
+A.delProfile=()=>{const p=P();askConfirm(`¿Borrar el perfil "${p.name}" y todos sus tiros?`,()=>{DB.shots.filter(s=>s.profileId===p.id).forEach(s=>delThumb(s.id));DB.shots=DB.shots.filter(s=>s.profileId!==p.id);DB.sessions=DB.sessions.filter(s=>s.profileId!==p.id);DB.profiles=DB.profiles.filter(x=>x.id!==p.id);DB.activeProfileId=DB.profiles[0].id;save();nav('home',null,true);});};
+A.phUp=i=>{i=+i;if(i<1)return;const a=P().phases;[a[i-1],a[i]]=[a[i],a[i-1]];save();render();};
+A.phDel=i=>{const a=P().phases;if(a.length<=1)return toast('Tiene que haber al menos una fase');a.splice(+i,1);save();render();};
+A.phAdd=()=>{P().phases.push({name:'Nueva fase',event:'manual'});save();render();};
+A.phReset=()=>{P().phases=defaultPhases();save();render();};
+A.exportData=()=>{const b=new Blob([JSON.stringify(DB,null,1)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='arquero-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();a.remove();toast('Archivo exportado (sin miniaturas)');};
+A.newSession=()=>nav('newSession');
+A.freePractice=()=>{const s={id:uid(),type:'libre',profileId:P().id,name:'Práctica libre',date:Date.now(),letdowns:0,done:false};DB.sessions.push(s);save();startTrain(s.id);};
+A.startSession=()=>{
+  const g=id=>$(id).value;const cfg={tandas:Math.max(1,+g('#ns_tandas')||1),flechas:Math.max(1,+g('#ns_flechas')||1),blanco:g('#ns_blanco'),distancia:+g('#ns_dist')||0,diametro:+g('#ns_diam')||0,sistema:g('#ns_sys'),xValor:+g('#ns_x')||0};
+  const s={id:uid(),type:'sesion',profileId:P().id,name:g('#ns_name')||'Sesión',date:Date.now(),cfg,ends:Array.from({length:cfg.tandas},()=>Array.from({length:cfg.flechas},()=>({shotId:null,score:null}))),curEnd:0,letdowns:0,done:false};
+  DB.sessions.push(s);save();startTrain(s.id);
+};
+A.resume=id=>startTrain(id);
+A.delSession=id=>askConfirm('¿Borrar esta sesión y sus tiros?',()=>{DB.shots.filter(s=>s.sessionId===id).forEach(s=>delThumb(s.id));DB.shots=DB.shots.filter(s=>s.sessionId!==id);DB.sessions=DB.sessions.filter(s=>s.id!==id);save();nav('history',null,true);});
+A.delShot=id=>askConfirm('¿Borrar este tiro?',()=>{removeShot(id);save();history.back();});
+function removeShot(id){const s=shotById(id);if(!s)return;const ses=sesById(s.sessionId);if(ses&&ses.ends)ses.ends.forEach(e=>e.forEach(c=>{if(c.shotId===id)c.shotId=null;}));DB.shots=DB.shots.filter(x=>x.id!==id);delThumb(id);}
+A.rateShot=(r,el)=>{const s=shotById(el.dataset.arg);if(s){s.rating=r;save();render();}};
+A.togglePerfect=id=>{const s=shotById(id);if(s){s.perfect=!s.perfect;if(s.perfect&&!s.rating)s.rating='bueno';save();render();}};
+function askConfirm(msg,fn){const o=document.createElement('div');o.className='ov';o.innerHTML=`<div class="card"><p>${h(msg)}</p><div class="row"><div class="sp"></div><button class="btn" id="cNo">Cancelar</button><button class="btn danger" id="cYes">Confirmar</button></div></div>`;document.body.appendChild(o);$('#cNo',o).onclick=()=>o.remove();$('#cYes',o).onclick=()=>{o.remove();fn();};}
+
+document.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(!el)return;const f=A[el.dataset.a];if(f){e.preventDefault();f(el.dataset.v,el,e);}});
+document.addEventListener('change',e=>{
+  const el=e.target,c=el.dataset.c;if(!c)return;const p=P();
+  if(c==='pf'){p[el.dataset.k]=el.type==='checkbox'?el.checked:el.value;save();}
+  else if(c==='pp'){const k=el.dataset.k;p.params[k]=el.type==='checkbox'?el.checked:el.type==='number'?+el.value:el.value;save();}
+  else if(c==='phn'){p.phases[+el.dataset.i].name=el.value||'Fase';save();}
+  else if(c==='phe'){p.phases[+el.dataset.i].event=el.value;save();}
+  else if(c==='nsTarget'){const t=TARGETS.find(x=>x.id===el.value);if(t){if(t.d)$('#ns_diam').value=t.d;$('#ns_sys').value=t.s;$('#ns_x').value=SYS[t.s].x;}}
+  else if(c==='nsSys'){$('#ns_x').value=SYS[el.value].x;}
+  else if(c==='importData'){const f=el.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.profiles)throw 0;askConfirm('¿Reemplazar todos los datos actuales por los del archivo?',()=>{DB=d;save();nav('home',null,true);toast('Datos importados');});}catch(x){toast('Archivo inválido');}};r.readAsText(f);}
+});
+
+/* ========= ENTRENAMIENTO ========= */
+const MP_VER='0.10.14';
+const MP_URL=`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
+const MODELS={
+  lite:'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+  full:'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task',
+  heavy:'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task',
+  gesture:'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task'
+};
+const T={running:false,stream:null,pose:null,poseModel:null,gest:null,vision:null,fileset:null,ses:null,lastVT:-1,frame:0,mode:'live',paused:false,blocked:false,sel:0,sm:null,swapped:false,swapCnt:0,lastShotId:null,ratingUntil:0,g:{name:null,since:0},pendingRaise:null,hudT:0,hintT:0,wake:null,ignoreVoiceUntil:0,person:false,fps:0,fpsT:0,fpsN:0};
+let S={shot:null};
+let D=newDetector();
+function newDetector(){return{st:'idle',raiseSince:0,lowSince:0,needLower:false,maxAD:0,anchorCand:0,anchorT:0,relT:0,samples:[],relRef:null,relFeat:null,prevSw:null,prevT:0,speed:0,thumbDone:false,thumb:null};}
+const vid=$('#vid'),cv=$('#cv'),ctx=cv.getContext('2d');
+
+async function startTrain(sesId){
+  T.ses=sesById(sesId);if(!T.ses)return;
+  T.ses.done=false;
+  $('#view').hidden=true;$('#train').hidden=false;
+  try{if(curView.v==='newSession'){history.replaceState({v:'home'},'');curView={v:'home'};}history.pushState({v:'train'},'');}catch(e){}
+  T.mode='live';T.paused=false;T.blocked=false;S.shot=null;D=newDetector();T.lastShotId=null;T.sm=null;
+  if(T.ses.type==='sesion'){T.sel=firstEmptyScore();if(isEndFull())T.blocked=true;}
+  renderEnd();renderLast();setHud('Cargando detector…','La primera vez puede tardar unos segundos');
+  T.running=true;
+  try{await startCamera();}catch(e){camError(e);return;}
+  try{await loadModels();}catch(e){console.error(e);setHud('No se pudo cargar el detector','Revisá tu conexión a internet y volvé a intentar');return;}
+  if(P().params.voice)startVoice();
+  wakeLock();
+  setHud('Listo','Ponete en posición');
+  requestAnimationFrame(loop);
+}
+function stopTrain(){
+  T.running=false;stopVoice();
+  if(T.stream){T.stream.getTracks().forEach(t=>t.stop());T.stream=null;}
+  try{T.wake&&T.wake.release();}catch(e){}T.wake=null;
+  if(S.shot)S.shot=null;
+  save();
+}
+A.exitTrain=()=>{history.back();};
+function camError(e){
+  const n=e&&e.name;let why,fix;
+  if(!window.isSecureContext||location.protocol==='file:'||location.protocol==='content:'){why='La página no se abrió desde una dirección segura (https).';fix='Abrí la app desde su dirección https:// en Chrome o Safari, no como archivo descargado ni desde la vista previa de otra app.';}
+  else if(window.top!==window.self){why='La app está abierta dentro de otra página o visor.';fix='Abrila directamente en Chrome o Safari.';}
+  else if(n==='NotAllowedError'||n==='SecurityError'){why='El navegador tiene bloqueada la cámara para esta página.';fix='Tocá el candado (o ⓘ) junto a la dirección → Permisos → Cámara → Permitir. Si no aparece: Ajustes del celu → Apps → Chrome → Permisos → Cámara → Permitir. Después tocá Reintentar.';}
+  else if(n==='NotFoundError'){why='No se encontró ninguna cámara.';fix='Probá cambiar entre cámara frontal y trasera.';}
+  else if(n==='NotReadableError'){why='Otra app está usando la cámara.';fix='Cerrá la cámara, WhatsApp, Instagram u otras apps y reintentá.';}
+  else{why='No se pudo abrir la cámara ('+(n||'error')+').';fix=(e&&e.message)||'';}
+  setHud('Sin acceso a la cámara',why);
+  const o=document.createElement('div');o.className='ov';o.id='camErr';
+  o.innerHTML=`<div class="card"><b>📷 Sin acceso a la cámara</b><p>${h(why)}</p><p class="mut">${h(fix)}</p><p class="mut" style="font-size:12px">Dirección actual: ${h(location.protocol+'//'+location.host)}</p><div class="row"><button class="btn" id="ceBack">Volver</button><div class="sp"></div><button class="btn pri" id="ceRetry">Reintentar</button></div></div>`;
+  document.body.appendChild(o);
+  $('#ceBack',o).onclick=()=>{o.remove();history.back();};
+  $('#ceRetry',o).onclick=()=>{o.remove();const id=T.ses.id;stopTrain();try{history.back();}catch(x){}setTimeout(()=>startTrain(id),300);};
+}
+async function startCamera(){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error('Este navegador no permite usar la cámara aquí. Abrí la app desde una dirección https:// en Chrome o Safari.');
+  if(T.stream)T.stream.getTracks().forEach(t=>t.stop());
+  const fm=P().params.camera;
+  try{T.stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:fm},width:{ideal:1280},height:{ideal:720}}});}
+  catch(e){if(e&&(e.name==='OverconstrainedError'||e.name==='NotReadableError'||e.name==='AbortError'))T.stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});else throw e;}
+  vid.srcObject=T.stream;await vid.play().catch(()=>{});
+  await new Promise(r=>{if(vid.videoWidth)r();else vid.onloadedmetadata=()=>r();});
+  const m=fm==='user';vid.classList.toggle('mirror',m);cv.classList.toggle('mirror',m);
+}
+A.flipCam=async()=>{const p=P();p.params.camera=p.params.camera==='user'?'environment':'user';save();try{await startCamera();}catch(e){toast('No se pudo cambiar la cámara');}};
+async function loadModels(){
+  if(!T.vision){T.vision=await import(`${MP_URL}/vision_bundle.mjs`);T.fileset=await T.vision.FilesetResolver.forVisionTasks(`${MP_URL}/wasm`);}
+  const want=P().params.model||'full';
+  if(!T.pose||T.poseModel!==want){
+    if(T.pose){try{T.pose.close()}catch(e){}}
+    T.pose=await mkTask(T.vision.PoseLandmarker,{baseOptions:{modelAssetPath:MODELS[want]},runningMode:'VIDEO',numPoses:1,minPoseDetectionConfidence:0.5,minPosePresenceConfidence:0.5,minTrackingConfidence:0.5});
+    T.poseModel=want;
+  }
+  if(P().params.gestures&&!T.gest){
+    mkTask(T.vision.GestureRecognizer,{baseOptions:{modelAssetPath:MODELS.gesture},runningMode:'VIDEO',numHands:1}).then(g=>T.gest=g).catch(e=>console.warn('gestos',e));
+  }
+}
+async function mkTask(cls,opts){
+  try{return await cls.createFromOptions(T.fileset,{...opts,baseOptions:{...opts.baseOptions,delegate:'GPU'}});}
+  catch(e){console.warn('GPU no disponible, usando CPU',e);return await cls.createFromOptions(T.fileset,{...opts,baseOptions:{...opts.baseOptions,delegate:'CPU'}});}
+}
+async function wakeLock(){try{if('wakeLock' in navigator)T.wake=await navigator.wakeLock.request('screen');}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&T.running)wakeLock();});
+
+function loop(){
+  if(!T.running)return;
+  requestAnimationFrame(loop);
+  if(!T.pose||vid.readyState<2)return;
+  if(vid.currentTime===T.lastVT)return;
+  T.lastVT=vid.currentTime;
+  const now=performance.now();T.frame++;
+  if(cv.width!==vid.videoWidth){cv.width=vid.videoWidth;cv.height=vid.videoHeight;}
+  let res;try{res=T.pose.detectForVideo(vid,now);}catch(e){return;}
+  T.fpsN++;if(now-T.fpsT>1000){T.fps=T.fpsN;T.fpsN=0;T.fpsT=now;}
+  const pts=processPose(res,now);
+  draw(pts);
+  if(T.mode==='rating'){
+    handleGesture(now);
+    if(now>T.ratingUntil){T.mode='live';updatePrompt();}
+  }
+  if(now-T.hudT>100){T.hudT=now;updateHud(now);}
+}
+
+/* ---- Geometría ---- */
+const sub=(a,b)=>({x:a.x-b.x,y:a.y-b.y});
+const dot=(a,b)=>a.x*b.x+a.y*b.y;
+const len=a=>Math.hypot(a.x,a.y);
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const mid=(a,b)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
+const deg=r=>r*180/Math.PI;
+function ang3(a,b,c){const u=[a.x-b.x,a.y-b.y,a.z-b.z],v=[c.x-b.x,c.y-b.y,c.z-b.z];const d=u[0]*v[0]+u[1]*v[1]+u[2]*v[2],n=Math.hypot(...u)*Math.hypot(...v);return n?deg(Math.acos(Math.max(-1,Math.min(1,d/n)))):NaN;}
+
+function processPose(res,now){
+  const lm=res&&res.landmarks&&res.landmarks[0],wl=res&&res.worldLandmarks&&res.worldLandmarks[0];
+  if(!lm){T.person=false;return null;}
+  T.person=true;
+  const W=vid.videoWidth,H=vid.videoHeight;
+  if(!T.sm)T.sm=[];const Pp=T.sm;
+  for(let i=0;i<33;i++){const x=lm[i].x*W,y=lm[i].y*H,v=lm[i].visibility??1;if(!Pp[i])Pp[i]={x,y,v};else{Pp[i].x+=(x-Pp[i].x)*0.65;Pp[i].y+=(y-Pp[i].y)*0.65;Pp[i].v=v;}}
+  const prof=P(),prm=prof.params;
+  let bS=SIDE[prof.bowHand],sS=SIDE[prof.bowHand==='L'?'R':'L'];
+  if(T.swapped)[bS,sS]=[sS,bS];
+  const nose=Pp[0];
+  const s0=dist(mid(Pp[11],Pp[12]),mid(Pp[23],Pp[24]));
+  const hipsOk=Pp[23].v>0.4&&Pp[24].v>0.4;
+  const s=Math.max(hipsOk?s0:dist(Pp[11],Pp[12])*1.3,20);
+  // auto-corrección de roles
+  if(prof.autoRoles&&D.st!=='anchored'&&D.st!=='released'){
+    const bw=Pp[bS.wr],sw=Pp[sS.wr];
+    const bothUp=bw.y<Pp[bS.sh].y+prm.raiseThr*s&&sw.y<Pp[sS.sh].y+prm.raiseThr*s;
+    if(bothUp&&dist(bw,nose)<dist(sw,nose)*0.6){if(++T.swapCnt>8){T.swapped=!T.swapped;T.swapCnt=0;[bS,sS]=[sS,bS];}}else T.swapCnt=0;
+  }
+  const bs=Pp[bS.sh],be=Pp[bS.el],bw=Pp[bS.wr],ss=Pp[sS.sh],se=Pp[sS.el],sw=Pp[sS.wr],si=Pp[sS.ix];
+  const mo=dist(si,Pp[9])<dist(si,Pp[10])?Pp[9]:Pp[10];
+  const pts={P:Pp,bS,sS,s,mo};
+  const keyVis=[bs,ss,bw,sw].every(p=>p.v>0.3);
+  if(!keyVis||T.paused)return pts;
+  const ad=Math.min(dist(si,mo),dist(sw,mo))/s;
+  pts.ad=ad;
+  // velocidad mano de cuerda
+  if(D.prevSw&&now>D.prevT){const v=dist(sw,D.prevSw)/s/((now-D.prevT)/1000);D.speed=v;}
+  const prevSw=D.prevSw;D.prevSw={x:sw.x,y:sw.y};D.prevT=now;
+  const raised=bw.y<bs.y+prm.raiseThr*s;
+  if(raised)D.lowSince=0;else if(!D.lowSince)D.lowSince=now;
+  const lowFor=raised?0:now-D.lowSince;
+  const abort=()=>{const was=D.st;D=Object.assign(newDetector(),{needLower:!raised,prevSw:D.prevSw,prevT:D.prevT});if(was!=='idle'&&was!=='raised')emit('abort',now);else emit('reset',now);};
+  switch(D.st){
+    case 'idle':
+      if(D.needLower){if(lowFor>300)D.needLower=false;break;}
+      if(raised){if(!D.raiseSince)D.raiseSince=now;if(now-D.raiseSince>150){D.st='raised';D.maxAD=ad;emit('levantar',D.raiseSince);}}else D.raiseSince=0;
+      break;
+    case 'raised':
+      D.maxAD=Math.max(D.maxAD,ad);
+      if(ad<D.maxAD-0.25||ad<=prm.anchorThr){D.st='drawing';emit('apertura',now);}
+      else if(lowFor>400)abort();
+      break;
+    case 'drawing':
+      if(ad<prm.anchorThr&&D.speed<1.2){if(!D.anchorCand)D.anchorCand=now;if(now-D.anchorCand>200){D.st='anchored';D.anchorT=D.anchorCand;D.samples=[];emit('anclaje',D.anchorT);}}
+      else D.anchorCand=0;
+      if(lowFor>400)abort();
+      break;
+    case 'anchored':{
+      const u0=sub(sw,bw),L=len(u0)||1,u={x:u0.x/L,y:u0.y/L};let n={x:-u.y,y:u.x};if(n.y<0)n={x:-n.x,y:-n.y};
+      if(D.speed>prm.releaseSpeed&&ad>prm.anchorThr*0.9){
+        const ref=prevSw||sw;D.st='released';D.relT=now;D.relRef={sw:{x:ref.x,y:ref.y},bw:{x:bw.x,y:bw.y},u,n,s};emit('suelta',now);break;
+      }
+      if(ad>prm.anchorThr*1.8||lowFor>300){abort();break;}
+      if(wl){
+        const sp={s,bowElbow:ang3(wl[bS.sh],wl[bS.el],wl[bS.wr]),drawElbow:ang3(wl[sS.sh],wl[sS.el],wl[sS.wr]),
+          elbowLine:dot(sub(se,bw),n)/s*100,
+          shoulderTilt:deg(Math.atan2(ss.y-bs.y,Math.abs(ss.x-bs.x)||1)),
+          torsoLean:hipsOk?deg(Math.atan2((mid(bs,ss).x-mid(Pp[23],Pp[24]).x)*Math.sign(bw.x-ss.x||1),mid(Pp[23],Pp[24]).y-mid(bs,ss).y)):NaN,
+          headTilt:(Pp[bS.eye].v>0.3&&Pp[sS.eye].v>0.3)?deg(Math.atan2(Pp[sS.eye].y-Pp[bS.eye].y,Math.abs(Pp[sS.eye].x-Pp[bS.eye].x)||1)):NaN,
+          anchorDx:dot(sub(si,mo),u)/s*100,anchorDy:dot(sub(si,mo),n)/s*100,bw:{x:bw.x,y:bw.y},sw:{x:sw.x,y:sw.y}};
+        D.samples.push(sp);if(D.samples.length>600)D.samples.shift();
+        pts.sample=sp;
+      }
+      if(!D.thumbDone&&now-D.anchorT>350){D.thumbDone=true;D.thumb=captureThumb();}
+      break;}
+    case 'released':
+      if(!D.relFeat&&now-D.relT>=250)D.relFeat=relFeatures(sw,bw);
+      if((lowFor>200&&now-D.relT>400)||now-D.relT>prm.followMs){
+        if(!D.relFeat)D.relFeat=relFeatures(sw,bw);
+        D.st='done';emit('fin',now);
+        D.st='idle';D.raiseSince=0;D.needLower=true;
+      }
+      break;
+  }
+  return pts;
+}
+function relFeatures(sw,bw){const r=D.relRef;if(!r)return null;const d=sub(sw,r.sw);return{releaseBack:dot(d,r.u)/r.s*100,releaseDev:dot(d,r.n)/r.s*100,bowDrop:(bw.y-r.bw.y)/r.s*100};}
+function aimFeatures(){
+  const sm=D.samples;if(sm.length<3)return null;
+  const f={};
+  for(const k of['bowElbow','drawElbow','elbowLine','shoulderTilt','torsoLean','headTilt','anchorDx','anchorDy']){const v=sm.map(x=>x[k]).filter(isFinite);f[k]=v.length?mean(v):null;}
+  const s=mean(sm.map(x=>x.s));
+  const mb={x:mean(sm.map(x=>x.bw.x)),y:mean(sm.map(x=>x.bw.y))},ms={x:mean(sm.map(x=>x.sw.x)),y:mean(sm.map(x=>x.sw.y))};
+  f.stability=(mean(sm.map(x=>dist(x.bw,mb)))+mean(sm.map(x=>dist(x.sw,ms))))/2/s*100;
+  return f;
+}
+function captureThumb(){try{const w=320,hh=Math.round(w*cv.height/cv.width)||180;const c=document.createElement('canvas');c.width=w;c.height=hh;const x=c.getContext('2d');
+  if(vid.classList.contains('mirror')){x.translate(w,0);x.scale(-1,1);}x.drawImage(vid,0,0,w,hh);x.drawImage(cv,0,0,w,hh);return c.toDataURL('image/jpeg',0.65);}catch(e){return null;}}
+
+/* ---- Fases / ciclo del tiro ---- */
+function emit(ev,t){
+  const prof=P();
+  if(T.blocked)return;
+  if(T.mode==='rating'){
+    if(ev==='levantar'){T.pendingRaise=t;return;}
+    if(ev==='apertura'&&T.pendingRaise){endRating();const pr=T.pendingRaise;T.pendingRaise=null;emit('levantar',pr);}
+    else return;
+  }
+  if(ev==='reset'){if(S.shot&&prof.autoDetect&&!S.shot.manualStart)S.shot=null;return;}
+  if(ev==='abort'){if(S.shot&&prof.autoDetect){S.shot=null;T.ses.letdowns=(T.ses.letdowns||0)+1;save();toast('↩️ Bajada: tiro no contado');say('Bajada');}return;}
+  if(ev==='fin'){if(S.shot&&prof.autoDetect)finalizeShot(t);return;}
+  if(!prof.autoDetect)return;
+  const ph=prof.phases,cur=S.shot?S.shot.pi:-1;
+  for(let j=cur+1;j<ph.length;j++){if(ph[j].event===ev){gotoPhase(j,t);return;}}
+}
+function gotoPhase(j,t,manual){
+  const n=P().phases.length;
+  if(!S.shot)S.shot={start:t,pi:-1,starts:new Array(n).fill(null),manualStart:!!manual};
+  S.shot.pi=j;S.shot.starts[j]=t;
+}
+A.advance=()=>{
+  const t=performance.now(),n=P().phases.length;
+  if(T.blocked){A.nextEnd();return;}
+  if(T.mode==='rating'){endRating();return;}
+  if(!S.shot){gotoPhase(0,t,true);return;}
+  if(S.shot.pi>=n-1)finalizeShot(t);else gotoPhase(S.shot.pi+1,t,true);
+};
+A.pause=()=>{T.paused=!T.paused;$('#pauseBtn').textContent=T.paused?'▶ Seguir':'⏸ Pausa';if(T.paused){S.shot=null;D=newDetector();}toast(T.paused?'Detección en pausa':'Detección activa');};
+A.cancelShot=()=>{if(S.shot){S.shot=null;D=Object.assign(newDetector(),{needLower:true});toast('Tiro anulado');}else if(T.lastShotId&&T.mode==='rating'){askConfirm('¿Borrar el último tiro registrado?',()=>{removeShot(T.lastShotId);T.lastShotId=null;T.mode='live';T.blocked=false;save();renderEnd();renderLast();updatePrompt();});}else toast('No hay tiro en curso');};
+
+function finalizeShot(t){
+  const prof=P(),sh=S.shot;S.shot=null;
+  const starts=sh.starts,phases=prof.phases.map((p,i)=>{if(starts[i]==null)return{name:p.name,start:null,dur:null};let e=t;for(let j=i+1;j<starts.length;j++)if(starts[j]!=null){e=starts[j];break;}return{name:p.name,start:starts[i]-sh.start,dur:e-starts[i]};});
+  const total=t-sh.start;
+  let features=null;
+  const inWin=D.anchorT&&D.anchorT>=sh.start-3000;
+  if(inWin){features=aimFeatures()||{};if(D.relFeat)Object.assign(features,D.relFeat);if(D.relT&&D.anchorT)features.aim=(D.relT-D.anchorT)/1000;}
+  features=features||{};features.total=total/1000;
+  const ref=reference(prof.id),cmp=compare(features,ref);
+  const shot={id:uid(),sessionId:T.ses.id,profileId:prof.id,t:Date.now(),phases,total,features,rating:null,perfect:false,similarity:cmp?cmp.sim:null,score:null};
+  DB.shots.push(shot);T.lastShotId=shot.id;
+  if(inWin&&D.thumb)putThumb(shot.id,D.thumb);
+  D.thumb=null;D.anchorT=0;D.relT=0;D.relFeat=null;D.samples=[];
+  if(T.ses.type==='sesion'){
+    const e=T.ses.ends[T.ses.curEnd];const slot=e.findIndex(c=>!c.shotId);
+    if(slot>=0){e[slot].shotId=shot.id;if(e[slot].score!=null)shot.score=e[slot].score;}
+    if(isEndFull()){T.blocked=true;T.sel=firstEmptyScore();}
+  }
+  save();
+  T.mode='rating';T.ratingUntil=performance.now()+prof.params.ratingTimeout*1000;T.g={name:null,since:0};
+  const msg=cmp?`Similitud ${cmp.sim}%`:'';
+  say(T.blocked?'Tiro registrado. Tanda completa':'Tiro registrado');
+  if(cmp){const top=cmp.devs.filter(d=>Math.abs(d.z)>2).slice(0,1);if(top.length)toast(devText(top[0]),3500);}
+  renderEnd();renderLast(msg);updatePrompt();
+}
+function endRating(){T.mode='live';updatePrompt();}
+function rateLast(r){
+  const s=shotById(T.lastShotId);if(!s){toast('Todavía no hay un tiro para calificar');return;}
+  if(r==='perfecto'){s.perfect=true;s.rating='bueno';}else{s.rating=r;if(r!=='bueno')s.perfect=false;}
+  save();
+  const lbl={bueno:'👍 Bueno',medio:'✋ Medio',malo:'👎 Malo',perfecto:'⭐ Perfecto'}[r];
+  toast(lbl+(r==='perfecto'?' · agregado a tu referencia':''));say(r==='perfecto'?'Perfecto, guardado como referencia':r);
+  T.ignoreVoiceUntil=performance.now()+1500;
+  if(T.mode==='rating')endRating();renderLast();
+}
+A.rate=r=>rateLast(r);
+function handleGesture(now){
+  if(!T.gest||!P().params.gestures||T.frame%2)return;
+  let r;try{r=T.gest.recognizeForVideo(vid,now);}catch(e){return;}
+  const g=r&&r.gestures&&r.gestures[0]&&r.gestures[0][0];
+  const map={Thumb_Up:'bueno',Thumb_Down:'malo',Open_Palm:'medio',Victory:'perfecto'};
+  if(g&&g.score>0.6&&map[g.categoryName]){
+    if(T.g.name===g.categoryName){if(now-T.g.since>700){T.g={name:null,since:0};rateLast(map[g.categoryName]);}}
+    else T.g={name:g.categoryName,since:now};
+  }else T.g={name:null,since:0};
+}
+
+/* ---- Tanda / puntaje ---- */
+function curEnd(){return T.ses&&T.ses.type==='sesion'?T.ses.ends[T.ses.curEnd]:null;}
+function isEndFull(){const e=curEnd();return!!e&&e.every(c=>c.shotId||c.score!=null);}
+function firstEmptyScore(){const e=curEnd();if(!e)return 0;const i=e.findIndex(c=>c.score==null);return i<0?0:i;}
+function setScore(v){
+  const e=curEnd();if(!e)return;const c=e[T.sel];if(!c)return;c.score=v;
+  if(c.shotId){const s=shotById(c.shotId);if(s)s.score=v;}
+  const nx=e.findIndex((x,i)=>i>T.sel&&x.score==null);T.sel=nx>=0?nx:(e.findIndex(x=>x.score==null)>=0?e.findIndex(x=>x.score==null):T.sel);
+  if(isEndFull())T.blocked=true;
+  save();renderEnd();
+}
+A.selCell=i=>{T.sel=+i;T.showKeys=true;renderEnd();};
+A.toggleKeys=()=>{T.showKeys=!T.showKeys;renderEnd();};
+A.key=v=>{if(v==='del'){const e=curEnd();if(e&&e[T.sel]){e[T.sel].score=null;const s=e[T.sel].shotId&&shotById(e[T.sel].shotId);if(s)s.score=null;save();renderEnd();}return;}setScore(v==='X'||v==='M'?v:+v);};
+A.closeEnd=()=>{T.blocked=true;T.sel=firstEmptyScore();S.shot=null;renderEnd();say('Tanda terminada');};
+A.nextEnd=()=>{
+  const s=T.ses;if(!s||s.type!=='sesion')return;
+  if(s.curEnd>=s.cfg.tandas-1){s.done=true;save();say('Sesión terminada');stopTrain();curView={v:'session',arg:s.id};try{history.replaceState(curView,'');}catch(e){}render();return;}
+  s.curEnd++;T.blocked=false;T.sel=0;S.shot=null;D=Object.assign(newDetector(),{needLower:true});T.mode='live';save();renderEnd();updatePrompt();say('Tanda '+(s.curEnd+1));
+};
+A.finishSession=()=>askConfirm('¿Terminar la sesión ahora?',()=>{T.ses.done=true;save();stopTrain();curView={v:'session',arg:T.ses.id};try{history.replaceState(curView,'');}catch(e){}render();});
+function renderEnd(){
+  const el=$('#endPanel');const s=T.ses;
+  if(!s||s.type!=='sesion'){el.innerHTML=`<div class="row end"><b>Práctica libre</b><span class="mut">${DB.shots.filter(x=>x.sessionId===(s&&s.id)).length} tiros</span><div class="sp"></div><button class="btn sm" data-a="finishFree">Terminar</button></div>`;$('#advBtn').textContent='▶ Fase';return;}
+  const e=curEnd(),tt=sesTotals(s),sys=SYS[s.cfg.sistema];
+  el.innerHTML=`<div class="end"><div class="row"><b>Tanda ${s.curEnd+1}/${s.cfg.tandas}</b><span class="mut">· ${s.cfg.distancia} m</span><div class="sp"></div><span>Tanda <b>${tt.ends[s.curEnd]}</b> · Total <b>${tt.pts}</b></span></div>
+  <div class="cells">${e.map((c,i)=>`<div class="cell${i===T.sel?' sel':''}" data-a="selCell" data-v="${i}">${c.score??''}${c.shotId?`<span class="dot" style="background:${rateCol(c.shotId)}"></span>`:''}</div>`).join('')}</div>
+  ${T.blocked?`<div class="mut" style="margin:2px 0 4px">Tanda completa: cargá los puntajes y pasá a la siguiente.</div>`:''}
+  ${T.blocked||T.showKeys?`<div class="keys">${sys.vals.map(v=>`<button data-a="key" data-v="${v}">${v}</button>`).join('')}<button data-a="key" data-v="del">⌫</button></div>`:''}
+  <div class="row" style="margin-top:6px">${T.blocked?`<button class="btn pri sm" data-a="nextEnd">${s.curEnd>=s.cfg.tandas-1?'Terminar sesión ✔':'Siguiente tanda ▶'}</button>`:`<button class="btn sm" data-a="closeEnd">Cerrar tanda</button><button class="btn sm" data-a="toggleKeys">${T.showKeys?'Ocultar':'🎯 Anotar'}</button>`}<div class="sp"></div><button class="btn sm" data-a="finishSession">Finalizar sesión</button></div></div>`;
+  $('#advBtn').textContent=T.blocked?'▶ Sig. tanda':'▶ Fase';
+}
+A.finishFree=()=>{if(T.ses){T.ses.done=true;save();const id=T.ses.id;stopTrain();curView={v:'session',arg:id};try{history.replaceState(curView,'');}catch(e){}render();}};
+function rateCol(id){const s=shotById(id);if(!s||!s.rating)return '#8b949e';return s.perfect?'#f0b429':s.rating==='bueno'?'#3ddc84':s.rating==='medio'?'#f7d154':'#ff5c5c';}
+function renderLast(extra){
+  const s=shotById(T.lastShotId);const el=$('#lastShot');
+  if(!s){el.textContent='Sin tiros todavía en esta sesión.';return;}
+  el.innerHTML=`Último tiro: <b>${secs(s.total)}</b>${s.features&&s.features.aim!=null?` · puntería ${fx(s.features.aim,1)} s`:''}${s.similarity!=null?` · similitud <b>${s.similarity}%</b>`:''}${s.rating?` · <span class="tag r-${s.rating}">${s.rating}</span>`:''}${s.perfect?' ⭐':''}`;
+}
+
+/* ---- HUD ---- */
+function setHud(a,b){$('#hPhase').textContent=a;$('#hSub').textContent=b||'';}
+function updatePrompt(){
+  const el=$('#prompt');
+  if(T.mode==='rating')el.innerHTML='¿Cómo fue? Decí <b>bueno / medio / malo / perfecto</b> o mostrá 👍 ✋ 👎 ✌️';
+  else if(T.blocked)el.innerHTML='Tanda completa · cargá puntajes · decí <b>"siguiente tanda"</b>';
+  else el.innerHTML='';
+}
+function updateHud(now){
+  const prof=P(),ph=prof.phases;
+  if(T.paused)setHud('En pausa','Tocá ▶ Seguir');
+  else if(!T.person)setHud('Buscando arquero…','Ubicate frente a la cámara');
+  else if(S.shot){const cur=ph[S.shot.pi];setHud(cur?cur.name:'—',`Fase ${S.shot.pi+1}/${ph.length}`);}
+  else if(T.blocked)setHud('Tanda completa','');
+  else if(T.mode==='rating')setHud('Calificá el tiro','');
+  else setHud(D.needLower?'Bajá el arco':'Listo para tirar',prof.autoDetect?'Detección automática':'Fases manuales: tocá ▶');
+  $('#hTimer').textContent=S.shot?fx((now-S.shot.start)/1000,1):'0,0';
+  $('#phasebar').innerHTML=ph.map((p,i)=>{let tx='';if(S.shot&&S.shot.starts[i]!=null){let e=now;for(let j=i+1;j<ph.length;j++)if(S.shot.starts[j]!=null){e=S.shot.starts[j];break;}tx=fx((e-S.shot.starts[i])/1000,1);}
+    return `<div class="${S.shot&&S.shot.pi===i?'cur':''}">${h(p.name)} ${tx}</div>`}).join('');
+  $('#chips').innerHTML=`<span class="chip ${T.person?'on':'off'}">● ${T.person?'Cuerpo detectado':'Sin cuerpo'}</span>`+
+    (prof.params.voice?`<span class="chip ${T.voiceOn?'on':'off'}">🎙 ${T.voiceOn?'Voz activa':'Voz apagada'}</span>`:'')+
+    (prof.params.gestures?`<span class="chip ${T.gest?'on':'off'}">✋ ${T.gest?'Gestos':'Cargando gestos'}</span>`:'')+
+    `<span class="chip">${T.fps} fps${T.swapped?' · brazos invertidos':''}</span>`;
+}
+function draw(pts){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  if(!pts)return;
+  const{P:Pp,bS,sS,s,mo}=pts;const lw=Math.max(2,cv.width/320);
+  const bowSet=new Set([bS.sh,bS.el,bS.wr,bS.ix]),strSet=new Set([sS.sh,sS.el,sS.wr,sS.ix]);
+  ctx.lineCap='round';
+  for(const[a,b]of CONN){if(Pp[a].v<0.3||Pp[b].v<0.3)continue;ctx.strokeStyle=bowSet.has(a)&&bowSet.has(b)?'#3ddc84':strSet.has(a)&&strSet.has(b)?'#ff9f43':'rgba(255,255,255,.55)';ctx.lineWidth=lw*1.6;ctx.beginPath();ctx.moveTo(Pp[a].x,Pp[a].y);ctx.lineTo(Pp[b].x,Pp[b].y);ctx.stroke();}
+  const dotp=(p,c,r)=>{if(p.v<0.3)return;ctx.fillStyle=c;ctx.beginPath();ctx.arc(p.x,p.y,r,0,7);ctx.fill();};
+  [11,12,13,14,23,24].forEach(i=>dotp(Pp[i],'#fff',lw*2.5));
+  dotp(Pp[bS.wr],'#3ddc84',lw*4.5);dotp(Pp[sS.wr],'#ff9f43',lw*4.5);dotp(Pp[sS.ix],'#ff9f43',lw*3);
+  dotp(Pp[9],'#ff6bd6',lw*2.5);dotp(Pp[10],'#ff6bd6',lw*2.5);
+  // zona de anclaje
+  if(mo&&mo.v>0.3){const prm=P().params;ctx.strokeStyle=D.st==='anchored'?'#3ddc84':'rgba(255,107,214,.7)';ctx.lineWidth=lw;ctx.setLineDash([lw*3,lw*3]);ctx.beginPath();ctx.arc(mo.x,mo.y,prm.anchorThr*s,0,7);ctx.stroke();ctx.setLineDash([]);}
+  // línea de fuerza en anclaje
+  if(D.st==='anchored'){ctx.strokeStyle='rgba(240,180,41,.9)';ctx.lineWidth=lw;ctx.beginPath();ctx.moveTo(Pp[bS.wr].x,Pp[bS.wr].y);const u=sub(Pp[sS.wr],Pp[bS.wr]);ctx.lineTo(Pp[bS.wr].x+u.x*1.5,Pp[bS.wr].y+u.y*1.5);ctx.stroke();}
+  // consejo en vivo durante la puntería
+  const now=performance.now();
+  if(pts.sample&&now-T.hintT>600){T.hintT=now;const cmp=compare(pts.sample,reference(P().id));const d=cmp&&cmp.devs.find(x=>Math.abs(x.z)>2&&x.k!=='stability');$('#hint').textContent=d?'⚠️ '+devText(d):(cmp?'✅ Como tu referencia':'');}
+  else if(D.st!=='anchored'&&$('#hint').textContent&&now-T.hintT>1500)$('#hint').textContent='';
+}
+
+/* ---- Voz ---- */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null;
+function startVoice(){
+  if(!SR){toast('Este navegador no soporta comandos de voz');return;}
+  try{rec=new SR();}catch(e){return;}
+  rec.lang='es-AR';rec.continuous=true;rec.interimResults=false;rec.maxAlternatives=1;
+  rec.onresult=e=>{for(let i=e.resultIndex;i<e.results.length;i++)if(e.results[i].isFinal)handleVoice(e.results[i][0].transcript);};
+  rec.onerror=e=>{if(e.error==='not-allowed'||e.error==='service-not-allowed'){T.voiceOn=false;toast('Micrófono no permitido: la voz queda desactivada');}};
+  rec.onend=()=>{if(T.voiceOn&&T.running)setTimeout(()=>{try{rec.start();}catch(e){}},250);};
+  T.voiceOn=true;try{rec.start();}catch(e){}
+}
+function stopVoice(){T.voiceOn=false;try{rec&&rec.stop();}catch(e){}rec=null;}
+const NUMS={cero:'M',fuera:'M',afuera:'M',mi:'M',miss:'M',m:'M',equis:'X',x:'X',diez:10,nueve:9,ocho:8,siete:7,seis:6,cinco:5,cuatro:4,tres:3,dos:2,uno:1,un:1};
+function handleVoice(txt){
+  if(performance.now()<T.ignoreVoiceUntil)return;
+  const t=norm(txt).trim();if(!t)return;
+  const w=t.split(/\s+/);
+  if(/siguiente tanda|proxima tanda|nueva tanda/.test(t)){if(T.blocked)A.nextEnd();else A.closeEnd();return;}
+  if(/\b(pausa|pausar)\b/.test(t)){if(!T.paused)A.pause();return;}
+  if(/\b(seguir|continuar|reanudar)\b/.test(t)){if(T.paused)A.pause();return;}
+  if(/\b(anular|cancelar)\b/.test(t)){A.cancelShot();return;}
+  if(/\bperfect[oa]\b/.test(t)){rateLast('perfecto');}
+  else if(/\b(buen[oa]|bien)\b/.test(t)&&!/\bmas o menos\b/.test(t)){rateLast('bueno');}
+  else if(/\b(medio|regular|mas o menos)\b/.test(t)){rateLast('medio');}
+  else if(/\b(mal[oa]?)\b/.test(t)){rateLast('malo');}
+  else if(/\b(siguiente|proxima|empezar|comenzar|fase|ya)\b/.test(t)){A.advance();return;}
+  if(T.ses&&T.ses.type==='sesion'){
+    const sys=SYS[T.ses.cfg.sistema].vals.map(String);
+    for(const x of w){let v=NUMS[x];if(v==null&&/^\d+$/.test(x))v=+x;if(v==null)continue;if(sys.includes(String(v))){setScore(v);}}
+  }
+}
+function say(text){
+  if(!P().params.speak||!window.speechSynthesis)return;
+  try{const u=new SpeechSynthesisUtterance(text);u.lang='es-AR';u.rate=1.1;u.onend=()=>{T.ignoreVoiceUntil=performance.now()+300;};speechSynthesis.cancel();speechSynthesis.speak(u);T.ignoreVoiceUntil=performance.now()+900;}catch(e){}
+}
+
+/* ========= INICIO ========= */
+idbOpen();
+try{history.replaceState({v:'home'},'');}catch(e){}
+render();
+</script>
+</body>
+</html>
