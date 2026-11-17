@@ -189,12 +189,12 @@ const CONN=[[11,12],[11,23],[12,24],[23,24],[11,13],[13,15],[12,14],[14,16],[15,
 const LS='arquero_v1';
 function defaultPhases(){return[{name:'Elevación',event:'levantar'},{name:'Apertura',event:'apertura'},{name:'Anclaje y puntería',event:'anclaje'},{name:'Suelta y seguimiento',event:'suelta'}];}
 function newProfile(name){return{id:uid(),name,bowHand:'L',autoRoles:true,autoDetect:true,phases:defaultPhases(),
-  params:{anchorThr:0.35,raiseThr:0.45,releaseSpeed:2.5,followMs:1500,ratingTimeout:12,model:'full',camera:'environment',voice:true,gestures:true,speak:true,useModel:true},
+  params:{relDisp:0.08,anchorThr:0.35,raiseThr:0.45,releaseSpeed:2.5,followMs:1500,ratingTimeout:12,model:'full',camera:'environment',voice:true,gestures:true,speak:true,useModel:true},
   calib:{model:null,gestures:{},gThr:0.35,voice:{},vcustom:{}}};}
 function seed(){const p=newProfile('Mi perfil');return{v:1,profiles:[p],activeProfileId:p.id,sessions:[],shots:[],recs:[]};}
 function load(){try{const d=JSON.parse(localStorage.getItem(LS));if(d&&d.profiles&&d.profiles.length)return d;}catch(e){}return seed();}
 let DB=load();
-function migrate(){DB.recs=DB.recs||[];for(const p of DB.profiles){p.calib=Object.assign({model:null,gestures:{},gThr:0.35,voice:{},vcustom:{}},p.calib||{});if(p.params.useModel==null)p.params.useModel=true;}}
+function migrate(){DB.recs=DB.recs||[];for(const p of DB.profiles){p.calib=Object.assign({model:null,gestures:{},gThr:0.35,voice:{},vcustom:{}},p.calib||{});if(p.params.useModel==null)p.params.useModel=true;if(p.params.relDisp==null)p.params.relDisp=0.08;}}
 migrate();
 function save(){try{localStorage.setItem(LS,JSON.stringify(DB));}catch(e){toast('⚠️ No se pudo guardar: almacenamiento lleno o bloqueado');}}
 const P=()=>DB.profiles.find(p=>p.id===DB.activeProfileId)||DB.profiles[0];
@@ -308,6 +308,7 @@ VIEWS.profile=()=>{
   <h2>Sensibilidad de la detección</h2><div class="card">
   ${num('anchorThr','Distancia de anclaje a la comisura (× largo del torso)',pr.anchorThr,0.1,0.8,0.05)}
   ${num('raiseThr','Altura para "arco levantado" (muñeca bajo el hombro, × torso)',pr.raiseThr,0.1,1,0.05)}
+  ${num('relDisp','Desplazamiento hacia atrás para detectar la suelta (× torso)',pr.relDisp,0.02,0.4,0.01)}
   ${num('releaseSpeed','Velocidad para detectar la suelta (torsos/seg)',pr.releaseSpeed,1,8,0.5)}
   ${num('followMs','Tiempo máximo de seguimiento tras la suelta (ms)',pr.followMs,500,5000,100)}
   ${num('ratingTimeout','Segundos para calificar con gesto/voz',pr.ratingTimeout,3,60,1)}
@@ -590,10 +591,11 @@ function featVec(Pp,bS,sS,s,mo,spS,spB){
 function torsoScale(Pp){const s0=dist(mid(Pp[11],Pp[12]),mid(Pp[23],Pp[24]));const hipsOk=Pp[23].v>0.4&&Pp[24].v>0.4;return{s:Math.max(hipsOk?s0:dist(Pp[11],Pp[12])*1.3,20),hipsOk};}
 function smoothInto(arr,lm,W,H,a){for(let i=0;i<33;i++){const x=lm[i].x*W,y=lm[i].y*H,v=lm[i].visibility??1;if(!arr[i])arr[i]={x,y,v};else{arr[i].x+=(x-arr[i].x)*a;arr[i].y+=(y-arr[i].y)*a;arr[i].v=v;}}}
 function processPose(res,now){
+  const sim=T.camMode==='sim';
   const lm=res&&res.landmarks&&res.landmarks[0],wl=res&&res.worldLandmarks&&res.worldLandmarks[0];
-  if(!lm){T.person=false;return null;}
+  if(!lm){T.person=false;if((T.camMode==='train'||sim)&&!T.paused)timeoutCheck(now,null);return null;}
   T.person=true;
-  const W=vid.videoWidth,H=vid.videoHeight;
+  const W=sim?T.simW:vid.videoWidth,H=sim?T.simH:vid.videoHeight;
   if(!T.sm)T.sm=[];const Pp=T.sm;smoothInto(Pp,lm,W,H,0.65);
   const prof=P(),prm=prof.params;
   let bS=SIDE[prof.bowHand],sS=SIDE[prof.bowHand==='L'?'R':'L'];
@@ -608,24 +610,49 @@ function processPose(res,now){
   const bs=Pp[bS.sh],bw=Pp[bS.wr],ss=Pp[sS.sh],se=Pp[sS.el],sw=Pp[sS.wr],si=Pp[sS.ix];
   const mo=dist(si,Pp[9])<dist(si,Pp[10])?Pp[9]:Pp[10];
   const pts={P:Pp,bS,sS,s,mo};
-  if(T.camMode!=='train'||T.paused)return pts;
-  if(![bs,ss,bw].every(p=>p.v>0.3))return pts;
+  if((T.camMode!=='train'&&!sim)||T.paused)return pts;
+  const geo={sw,bw,s};
+  if(![bs,ss,bw].every(p=>p.v>0.3)){timeoutCheck(now,geo);return pts;}
   const strVis=sw.v>0.3;
   const ad=Math.min(dist(si,mo),dist(sw,mo))/s;pts.ad=ad;T.liveAd=ad;
-  // velocidades con posiciones crudas (sin suavizar) para captar la suelta
   const rsw={x:lm[sS.wr].x*W,y:lm[sS.wr].y*H},rbw={x:lm[bS.wr].x*W,y:lm[bS.wr].y*H};
   if(D.prevSw&&now>D.prevT){const dt=(now-D.prevT)/1000;D.speed=dist(rsw,D.prevSw)/s/dt;D.bspeed=dist(rbw,D.prevBw)/s/dt;}
   D.prevSw=rsw;D.prevBw=rbw;D.prevT=now;T.liveSpeed=D.speed||0;
   const raised=bw.y<bs.y+prm.raiseThr*s;
   if(raised)D.lowSince=0;else if(!D.lowSince)D.lowSince=now;
   const lowFor=raised?0:now-D.lowSince;
-  const model=activeModel(prof);
-  const geo={sw,bw,s};
-  if(model)modelStep(model,featVec(Pp,bS,sS,s,mo,D.speed||0,D.bspeed||0),now,geo);
+  const model=activeModel(prof),kx=keyIdx(prof);
+  // dirección de la flecha (del arco hacia la cara) y perpendicular
+  const u0=sub(sw,bw),L0=len(u0)||1;let u={x:u0.x/L0,y:u0.y/L0};let nr={x:-u.y,y:u.x};if(nr.y<0)nr={x:-nr.x,y:-nr.y};
+  // posición media de la mano de cuerda durante el anclaje
+  if(D.st==='anchored'){
+    D.invis=strVis?0:(D.invis||0)+1;
+    if(strVis&&!D.moving){D.aN=(D.aN||0)+1;D.ax=(D.ax||0)+sw.x;D.ay=(D.ay||0)+sw.y;D.ux=(D.ux||0)+u.x;D.uy=(D.uy||0)+u.y;}
+  }
+  const aPos=D.aN>=3?{x:D.ax/D.aN,y:D.ay/D.aN}:null;
+  if(aPos){const ul=Math.hypot(D.ux,D.uy)||1;u={x:D.ux/ul,y:D.uy/ul};nr={x:-u.y,y:u.x};if(nr.y<0)nr={x:-nr.x,y:-nr.y};}
+  const back=aPos&&strVis?dot(sub(sw,aPos),u)/s:0;   // + = la mano se va hacia atrás (suelta); − = hacia el arco (bajada)
+  if(D.st==='anchored')T.liveBack=back;
+  D.moving=aPos&&strVis&&Math.abs(back)>prm.relDisp*0.5;
+  const relCheck=()=>{
+    if(D.st!=='anchored'||!aPos)return false;
+    if(strVis&&back>prm.relDisp)return true;                                   // se desplazó hacia atrás
+    if(strVis&&D.speed>prm.releaseSpeed&&back>prm.relDisp*0.4)return true;      // movimiento rápido hacia atrás
+    if(D.invis>=3&&raised)return true;                                         // la mano desapareció de golpe
+    return false;};
+  const doRelease=t=>{
+    if(model){const K=model.K;const from=M.c;M.c=Math.max(M.c,kx.r+1);M.cnt=0;M.rest=0;for(let j=from+1;j<=kx.r+1&&j<K-1;j++)modelEnter(j,t,geo,K-2);}
+    else emit('suelta',t);
+    D.st='released';D.relT=t;D.relRef={sw:aPos||{x:sw.x,y:sw.y},bw:{x:bw.x,y:bw.y},u,n:nr,s};D.relFeat=null;};
   const abort=()=>{const was=D.st;D=Object.assign(newDetector(),{needLower:!raised,prevSw:D.prevSw,prevBw:D.prevBw,prevT:D.prevT});if(was!=='idle'&&was!=='raised')emit('abort',now);else emit('reset',now);};
-  const u0=sub(sw,bw),L=len(u0)||1,u={x:u0.x/L,y:u0.y/L};let n={x:-u.y,y:u.x};if(n.y<0)n={x:-n.x,y:-n.y};
-  const release=(t,ref)=>{D.st='released';D.relT=t;D.relRef={sw:{x:ref.x,y:ref.y},bw:{x:bw.x,y:bw.y},u,n,s};D.relFeat=null;emit('suelta',t);};
-  switch(model?'ext':D.st){
+  if(model){
+    T.relOK=D.st!=='anchored'||!aPos||!strVis||back>prm.relDisp*0.3;
+    if(D.st==='anchored'&&aPos&&strVis&&back<-0.25){logEv('bajada (mano hacia el arco)',now);M=newModelState();M.c=model.K-1;D=Object.assign(newDetector(),{needLower:!raised,prevSw:D.prevSw,prevBw:D.prevBw,prevT:D.prevT});emit('abort',now);return pts;}
+    modelStep(model,featVec(Pp,bS,sS,s,mo,D.speed||0,D.bspeed||0),now,geo);
+    // respaldo: si el modelo no marcó el anclaje pero la mano está quieta en la cara
+    if(M.c>=1&&M.c-1<kx.a&&strVis&&ad<prm.anchorThr&&D.speed<1.5){if(!D.anchorCand)D.anchorCand=now;if(now-D.anchorCand>300){const from=M.c;M.c=kx.a+1;M.cnt=0;for(let j=from+1;j<=kx.a+1;j++)modelEnter(j,D.anchorCand,geo,model.K-2);}}else D.anchorCand=0;
+    if(D.st==='anchored'&&relCheck())doRelease(now);
+  }else switch(D.st){
     case 'idle':
       if(D.needLower){if(lowFor>300)D.needLower=false;break;}
       if(raised){if(!D.raiseSince)D.raiseSince=now;if(now-D.raiseSince>150){D.st='raised';D.maxAD=ad;emit('levantar',D.raiseSince);}}else D.raiseSince=0;
@@ -633,46 +660,48 @@ function processPose(res,now){
     case 'raised':
       D.maxAD=Math.max(D.maxAD,ad);
       if(ad<D.maxAD-0.25||ad<=prm.anchorThr){D.st='drawing';emit('apertura',now);}
-      else if(lowFor>400)abort();
+      else if(lowFor>400){logEv('bajó el arco',now);abort();}
       break;
     case 'drawing':
-      if(strVis&&ad<prm.anchorThr&&D.speed<1.5){if(!D.anchorCand)D.anchorCand=now;if(now-D.anchorCand>200){D.st='anchored';D.anchorT=D.anchorCand;D.samples=[];D.exitT=0;D.invis=0;emit('anclaje',D.anchorT);}}
+      if(strVis&&ad<prm.anchorThr&&D.speed<1.5){if(!D.anchorCand)D.anchorCand=now;if(now-D.anchorCand>200){D.st='anchored';D.anchorT=D.anchorCand;D.samples=[];D.invis=0;D.aN=0;D.ax=D.ay=D.ux=D.uy=0;emit('anclaje',D.anchorT);}}
       else D.anchorCand=0;
-      if(lowFor>400)abort();
+      if(lowFor>400){logEv('bajó el arco',now);abort();}
       break;
-    case 'anchored':{
-      if(strVis&&ad<=prm.anchorThr){D.lastAnchSw={x:sw.x,y:sw.y};D.exitT=0;}
-      else if(!D.exitT){D.exitT=now;D.exitAt=D.lastAnchSw||{x:sw.x,y:sw.y};}
-      D.invis=strVis?0:D.invis+1;
-      const fast=strVis&&D.speed>prm.releaseSpeed&&ad>prm.anchorThr*0.8;
-      const jump=D.exitT&&now-D.exitT<350&&ad>prm.anchorThr*2;
-      const vanished=D.invis>=3&&raised;
-      if(fast||jump||vanished){release(D.exitT||now,D.exitAt||D.lastAnchSw||sw);break;}
-      if((D.exitT&&now-D.exitT>=350&&ad>prm.anchorThr*1.8)||lowFor>300){abort();break;}
-      break;}
-    case 'released':
-      if((lowFor>200&&now-D.relT>400)||now-D.relT>prm.followMs){
-        if(!D.relFeat)D.relFeat=relFeatures(sw,bw);
-        emit('fin',now);
-        D.st='idle';D.raiseSince=0;D.needLower=true;
-      }
+    case 'anchored':
+      if(relCheck()){doRelease(now);break;}
+      if(aPos&&strVis&&back<-0.25){logEv('bajada (mano hacia el arco)',now);abort();break;}
+      if(lowFor>300){logEv('bajó el arco sin suelta',now);abort();break;}
       break;
   }
-  // muestreo de postura durante el anclaje y medición de la suelta (con o sin detector calibrado)
-  if(D.st==='anchored'&&wl&&strVis&&ad<=prm.anchorThr*1.4){
+  if(D.st==='released'){
+    if(!D.relFeat&&now-D.relT>=250)D.relFeat=relFeatures(sw,bw);
+    if((lowFor>200&&now-D.relT>400)||now-D.relT>prm.followMs)doFin(now,geo);
+  }
+  // muestreo de postura durante el anclaje
+  if(D.st==='anchored'&&wl&&strVis&&!D.moving&&ad<=prm.anchorThr*1.6){
     const sp={s,bowElbow:ang3(wl[bS.sh],wl[bS.el],wl[bS.wr]),drawElbow:ang3(wl[sS.sh],wl[sS.el],wl[sS.wr]),
-      elbowLine:dot(sub(se,bw),n)/s*100,
+      elbowLine:dot(sub(se,bw),nr)/s*100,
       shoulderTilt:deg(Math.atan2(ss.y-bs.y,Math.abs(ss.x-bs.x)||1)),
       torsoLean:hipsOk?deg(Math.atan2((mid(bs,ss).x-mid(Pp[23],Pp[24]).x)*Math.sign(bw.x-ss.x||1),mid(Pp[23],Pp[24]).y-mid(bs,ss).y)):NaN,
       headTilt:(Pp[bS.eye].v>0.3&&Pp[sS.eye].v>0.3)?deg(Math.atan2(Pp[sS.eye].y-Pp[bS.eye].y,Math.abs(Pp[sS.eye].x-Pp[bS.eye].x)||1)):NaN,
-      anchorDx:dot(sub(si,mo),u)/s*100,anchorDy:dot(sub(si,mo),n)/s*100,bw:{x:bw.x,y:bw.y},sw:{x:sw.x,y:sw.y}};
+      anchorDx:dot(sub(si,mo),u)/s*100,anchorDy:dot(sub(si,mo),nr)/s*100,bw:{x:bw.x,y:bw.y},sw:{x:sw.x,y:sw.y}};
     D.samples.push(sp);if(D.samples.length>600)D.samples.shift();
-    pts.sample=sp;D.lastU=u;D.lastN=n;if(model)D.lastAnchSw={x:sw.x,y:sw.y};
-    if(!D.thumbDone&&now-D.anchorT>350){D.thumbDone=true;D.thumb=captureThumb();}
+    pts.sample=sp;D.lastU=u;D.lastN=nr;
+    if(!sim&&!D.thumbDone&&now-D.anchorT>350){D.thumbDone=true;D.thumb=captureThumb();}
   }
-  if(D.st==='released'&&!D.relFeat&&now-D.relT>=250)D.relFeat=relFeatures(sw,bw);
   return pts;
 }
+function doFin(now,geo){
+  if(D.st!=='released')return;
+  if(!D.relFeat&&geo)D.relFeat=relFeatures(geo.sw,geo.bw);
+  const model=activeModel(P());
+  if(model){const K=model.K;M.c=K-1;M.cnt=0;emit('fin',now);}
+  else emit('fin',now);
+  D.st='idle';D.raiseSince=0;D.needLower=true;
+}
+function timeoutCheck(now,geo){if(D.st==='released'&&now-D.relT>P().params.followMs)doFin(now,geo);}
+function logEv(ev,t){if(!T.evlog)T.evlog=[];T.evlog.push({ev,t});if(T.evlog.length>14)T.evlog.shift();}
+function evSeq(){const l=T.evlog||[];if(!l.length)return '';const t0=l[0].t;return l.map(e=>`${h(e.ev)} <span class="mut">${fx((e.t-t0)/1000,1)}s</span>`).join(' → ');}
 function relFeatures(sw,bw){const r=D.relRef;if(!r)return null;const d=sub(sw,r.sw);return{releaseBack:dot(d,r.u)/r.s*100,releaseDev:dot(d,r.n)/r.s*100,bowDrop:(bw.y-r.bw.y)/r.s*100};}
 function aimFeatures(){
   const sm=D.samples;if(sm.length<3)return null;
@@ -689,7 +718,9 @@ function captureThumb(){try{const w=320,hh=Math.round(w*cv.height/cv.width)||180
 /* ---- Fases / ciclo del tiro ---- */
 function emit(ev,t,idx){
   const prof=P();
+  if(T.camMode==='sim'){T.simLog.push({ev,t,idx});return;}
   if(T.camMode!=='train'||T.blocked)return;
+
   if(T.mode==='rating'){
     const isStart=ev==='levantar'||(ev==='phase'&&idx===0);
     const isNext=ev==='apertura'||(ev==='phase'&&idx>=1);
@@ -698,8 +729,8 @@ function emit(ev,t,idx){
     else return;
   }
   if(ev==='reset'){if(S.shot&&prof.autoDetect&&!S.shot.manualStart)S.shot=null;return;}
-  if(ev==='abort'){if(S.shot&&prof.autoDetect){S.shot=null;T.ses.letdowns=(T.ses.letdowns||0)+1;save();toast('↩️ Bajada: tiro no contado');say('Bajada');}return;}
-  if(ev==='fin'){if(S.shot&&prof.autoDetect)finalizeShot(t);return;}
+  if(ev==='abort'){if(S.shot&&prof.autoDetect){logEv('descartado',t);S.shot=null;T.ses.letdowns=(T.ses.letdowns||0)+1;save();toast('↩️ Bajada: tiro no contado');say('Bajada');$('#lastShot').innerHTML='<b>Intento descartado:</b> '+evSeq();}return;}
+  if(ev==='fin'){if(S.shot&&prof.autoDetect){logEv('fin',t);finalizeShot(t);}return;}
   if(!prof.autoDetect)return;
   if(ev==='phase'){const cur=S.shot?S.shot.pi:-1;if(idx>cur)gotoPhase(idx,t);return;}
   const ph=prof.phases,cur=S.shot?S.shot.pi:-1;
@@ -708,7 +739,7 @@ function emit(ev,t,idx){
 function gotoPhase(j,t,manual){
   const n=P().phases.length;
   if(!S.shot)S.shot={start:t,pi:-1,starts:new Array(n).fill(null),manualStart:!!manual};
-  S.shot.pi=j;S.shot.starts[j]=t;
+  if(S.shot.pi<0)T.evlog=[];S.shot.pi=j;logEv(P().phases[j].name,t);S.shot.starts[j]=t;
 }
 A.advance=()=>{
   const t=performance.now(),n=P().phases.length;
@@ -807,7 +838,7 @@ function rateCol(id){const s=shotById(id);if(!s||!s.rating)return '#8b949e';retu
 function renderLast(extra){
   const s=shotById(T.lastShotId);const el=$('#lastShot');
   if(!s){el.textContent='Sin tiros todavía en esta sesión.';return;}
-  el.innerHTML=`Último tiro: <b>${secs(s.total)}</b>${s.features&&s.features.aim!=null?` · puntería ${fx(s.features.aim,1)} s`:''}${s.similarity!=null?` · similitud <b>${s.similarity}%</b>`:''}${s.rating?` · <span class="tag r-${s.rating}">${s.rating}</span>`:''}${s.perfect?' ⭐':''}`;
+  el.innerHTML=`Último tiro: <b>${secs(s.total)}</b>${s.features&&s.features.aim!=null?` · puntería ${fx(s.features.aim,1)} s`:''}${s.similarity!=null?` · similitud <b>${s.similarity}%</b>`:''}${s.rating?` · <span class="tag r-${s.rating}">${s.rating}</span>`:''}${s.perfect?' ⭐':''}`+(T.evlog&&T.evlog.length?`<div style="margin-top:4px">${evSeq()}</div>`:'');
 }
 
 /* ---- HUD ---- */
@@ -842,6 +873,8 @@ function chips(prof){
     (prof.params.voice&&T.camMode!=='gesture'?`<span class="chip ${T.voiceOn?'on':'off'}">🎙 ${T.voiceOn?'Voz activa':'Voz apagada'}</span>`:'')+
     ((prof.params.gestures||T.camMode==='gesture')&&T.camMode!=='record'?`<span class="chip ${T.gest?'on':'off'}">✋ ${T.gest?'Gestos':'Cargando gestos'}</span>`:'')+
     `<span class="chip">${T.fps} fps${T.swapped?' · brazos invertidos':''}</span>`+
+    (T.camMode==='train'?(activeModel(prof)?'<span class="chip on">🧠 Detector calibrado</span>':prof.calib&&prof.calib.model?'<span class="chip off">⚠️ Calibración inactiva</span>':'<span class="chip">⚙️ Detector básico</span>'):'')+
+    (T.camMode==='train'&&D.st==='anchored'&&T.liveBack!=null?`<span class="chip">suelta ${fx(T.liveBack,2)} / ${fx(prof.params.relDisp,2)}</span>`:'')+
     (T.camMode==='train'&&T.liveAd!=null?`<span class="chip">anclaje ${fx(T.liveAd,2)} · vel ${fx(T.liveSpeed,1)}</span>`:'');
 }
 function draw(pts){
@@ -936,20 +969,21 @@ function modelStep(m,f,t,geo){
   const ll=nbLL(m,f),K=m.K,n=K-2,c=M.c;
   if(c===K-1){if(ll[0]>=ll[K-1]){if(++M.cnt>=5){M.c=0;M.cnt=0;}}else M.cnt=0;return;}
   let nx=c+1;if(c>=1&&c+2<=K-1&&ll[c+2]>ll[c+1]+0.5&&ll[c+2]>ll[c]+0.5)nx=c+2;
-  if(ll[nx]>ll[c]){if(!M.cnt)M.first=t;M.cnt++;const need=c===0?4:2;
+  const kr=keyIdx(P()).r+1;if(nx>=kr&&c<kr&&T.relOK===false)nx=Math.min(nx,kr-1);
+  if(nx>c&&ll[nx]>ll[c]){if(!M.cnt)M.first=t;M.cnt++;const need=c===0?4:2;
     if(M.cnt>=need){const t0=M.first;M.cnt=0;M.rest=0;M.c=nx;for(let j=c+1;j<=nx;j++)modelEnter(j,t0,geo,n);return;}}
   else M.cnt=0;
   if(c>=1){let mx=0;for(let i=1;i<K;i++)if(ll[i]>ll[mx])mx=i;
     if(mx===0){if(++M.rest>=12){M.rest=0;M.cnt=0;
       if(c===n){M.c=K-1;modelEnter(K-1,t,geo,n);}
-      else{M.c=0;D=Object.assign(newDetector(),{prevSw:D.prevSw,prevBw:D.prevBw,prevT:D.prevT});emit('abort',t);}}}
+      else{M.c=K-1;logEv('volvió a reposo sin suelta',t);D=Object.assign(newDetector(),{prevSw:D.prevSw,prevBw:D.prevBw,prevT:D.prevT});emit('abort',t);}}}
     else M.rest=0;}
 }
 function modelEnter(j,t,geo,n){
   const k=keyIdx(P());
-  if(j===n+1){if(D.st==='released'&&!D.relFeat)D.relFeat=relFeatures(geo.sw,geo.bw);emit('fin',t);D.st='idle';return;}
+  if(j===n+1){if(D.st==='released'&&!D.relFeat&&geo)D.relFeat=relFeatures(geo.sw,geo.bw);emit('fin',t);D.st='idle';D.needLower=true;return;}
   const pi=j-1;
-  if(pi===k.a){D.st='anchored';D.anchorT=t;D.samples=[];D.thumbDone=false;D.lastAnchSw=null;}
+  if(pi===k.a){D.st='anchored';D.anchorT=t;D.samples=[];D.thumbDone=false;D.lastAnchSw=null;D.aN=0;D.ax=D.ay=D.ux=D.uy=0;D.invis=0;D.moving=false;}
   if(pi===k.r){const u0=sub(geo.sw,geo.bw),L=len(u0)||1;D.st='released';D.relT=t;D.relRef={sw:D.lastAnchSw||{x:geo.sw.x,y:geo.sw.y},bw:{x:geo.bw.x,y:geo.bw.y},u:D.lastU||{x:u0.x/L,y:u0.y/L},n:D.lastN||{x:0,y:1},s:geo.s};D.relFeat=null;}
   emit('phase',t,pi);
 }
@@ -1062,17 +1096,17 @@ A.trainModel=async()=>{
   const nShots=recs.reduce((a,r)=>a+r.shots.length,0);
   if(nShots<3)return toast('Etiquetá al menos 3 tiros (ideal 10 o más)');
   toast('🧠 Entrenando…',6000);
-  const n=p.phases.length,K=n+2,X=Array.from({length:K},()=>[]),k=keyIdx(p),adA=[],peaks=[];
+  const n=p.phases.length,K=n+2,X=Array.from({length:K},()=>[]),k=keyIdx(p),adA=[],peaks=[],noise=[],backs=[];
   const bS=SIDE[p.bowHand],sS=SIDE[p.bowHand==='L'?'R':'L'];
   for(const r of recs){
     const d=await idbGet('rec',r.id);if(!d)continue;
     const F=d.frames,N=d.n,W=r.w||640,H=r.h||480,sm=[];let pSw=null,pBw=null,pT=0;
-    const feats=new Array(N),times=new Float32Array(N),spd=new Float32Array(N);
+    const feats=new Array(N),times=new Float32Array(N),spd=new Float32Array(N),PS=new Array(N);
     for(let i=0;i<N;i++){const fr=frameAt(F,i);smoothInto(sm,fr.lm,W,H,0.65);const{s}=torsoScale(sm);
       const rsw={x:fr.lm[sS.wr].x*W,y:fr.lm[sS.wr].y*H},rbw={x:fr.lm[bS.wr].x*W,y:fr.lm[bS.wr].y*H};let sp=0,sb=0;
       if(pSw&&fr.t>pT){const dt=(fr.t-pT)/1000;sp=dist(rsw,pSw)/s/dt;sb=dist(rbw,pBw)/s/dt;}pSw=rsw;pBw=rbw;pT=fr.t;
       const si=sm[sS.ix],mo=dist(si,sm[9])<dist(si,sm[10])?sm[9]:sm[10];
-      feats[i]=featVec(sm,bS,sS,s,mo,sp,sb);times[i]=fr.t;spd[i]=sp;}
+      feats[i]=featVec(sm,bS,sS,s,mo,sp,sb);times[i]=fr.t;spd[i]=sp;PS[i]={sw:{x:sm[sS.wr].x,y:sm[sS.wr].y},bw:{x:sm[bS.wr].x,y:sm[bS.wr].y},s};}
     const inShot=new Uint8Array(N);
     for(const sh of r.shots){if(sh.marks.length!==n)continue;const m=sh.marks;let pk=0;
       for(let i=0;i<N;i++){const t=times[i];let c=-1;
@@ -1080,7 +1114,13 @@ A.trainModel=async()=>{
         if(c>=0){X[c].push(feats[i]);inShot[i]=1;}
         if(c===k.a+1)adA.push(feats[i][10]);
         if(Math.abs(t-m[k.r])<200)pk=Math.max(pk,spd[i]);}
-      if(pk)peaks.push(pk);}
+      if(pk)peaks.push(pk);
+      // desplazamiento hacia atrás en la suelta vs. ruido durante el anclaje
+      const aI=[];for(let i=0;i<N;i++)if(times[i]>=m[k.a]+150&&times[i]<m[k.r])aI.push(i);
+      if(aI.length>=3){const ax=mean(aI.map(i=>PS[i].sw.x)),ay=mean(aI.map(i=>PS[i].sw.y)),bx=mean(aI.map(i=>PS[i].bw.x)),by=mean(aI.map(i=>PS[i].bw.y));
+        const ul=Math.hypot(ax-bx,ay-by)||1,uu={x:(ax-bx)/ul,y:(ay-by)/ul};const bk=i=>((PS[i].sw.x-ax)*uu.x+(PS[i].sw.y-ay)*uu.y)/PS[i].s;
+        for(const i of aI)noise.push(Math.abs(bk(i)));let mx=0;for(let i=0;i<N;i++)if(times[i]>=m[k.r]&&times[i]<=m[k.r]+350)mx=Math.max(mx,bk(i));if(mx>0)backs.push(mx);}
+    }
     for(let i=0;i<N;i+=3)if(!inShot[i])X[0].push(feats[i]);
   }
   const dim=(X.find(a=>a.length)||[[]])[0].length;if(!dim)return toast('No se pudieron leer las grabaciones');
@@ -1092,7 +1132,54 @@ A.trainModel=async()=>{
   p.calib.model={K,mean:mean_,vr,n:nShots,date:Date.now(),sig:phSig(p),frames:X.map(a=>a.length)};
   if(adA.length>10){adA.sort((a,b)=>a-b);p.params.anchorThr=+Math.min(0.8,Math.max(0.15,adA[Math.floor(adA.length*0.9)]*1.25)).toFixed(2);}
   if(peaks.length>=2){peaks.sort((a,b)=>a-b);p.params.releaseSpeed=+Math.min(8,Math.max(1,peaks[Math.floor(peaks.length/2)]*0.5)).toFixed(1);}
+  if(backs.length>=2){backs.sort((a,b)=>a-b);noise.sort((a,b)=>a-b);const nz=noise.length?noise[Math.floor(noise.length*0.95)]:0;p.params.relDisp=+Math.min(0.4,Math.max(0.02,Math.min(backs[0]*0.6,backs[Math.floor(backs.length/2)]*0.45),nz*1.5)).toFixed(3);}
   p.params.useModel=true;save();render();toast(`✅ Detector calibrado con ${nShots} tiros`,3500);
+};
+
+/* ---- Prueba del detector con las grabaciones etiquetadas ---- */
+A.simTest=async()=>{
+  const p=P(),n=p.phases.length,recs=DB.recs.filter(r=>r.profileId===p.id&&r.shots.some(s=>s.marks.length===n));
+  if(!recs.length)return toast('Primero etiquetá algunos tiros');
+  if(!$('#train').hidden)return toast('Cerrá la cámara antes de probar');
+  toast('🔬 Probando…',4000);
+  const saved={camMode:T.camMode,sm:T.sm,D,M,swapped:T.swapped,useModel:p.params.useModel,paused:T.paused,person:T.person};
+  const modes=[{k:'basic',l:'⚙️ Detector básico'}];if(p.calib.model&&p.calib.model.sig===phSig(p))modes.push({k:'model',l:'🧠 Detector calibrado'});
+  const out=[];
+  try{
+    for(const md of modes){
+      p.params.useModel=md.k==='model';
+      const st={ph:Array.from({length:n},()=>({ok:0,err:[]})),fin:{ok:0,err:[]},shots:0,aborts:0,extra:0};
+      for(const r of recs){
+        const d=await idbGet('rec',r.id);if(!d)continue;
+        T.camMode='sim';T.paused=false;T.simW=r.w||640;T.simH=r.h||480;T.sm=null;T.swapped=false;T.simLog=[];D=newDetector();M=newModelState();
+        for(let i=0;i<d.n;i++){const fr=frameAt(d.frames,i);processPose({landmarks:[fr.lm],worldLandmarks:[fr.wl]},fr.t);}
+        const log=T.simLog;
+        for(const sh of r.shots){if(sh.marks.length!==n)continue;st.shots++;
+          const w0=sh.marks[0]-2500,w1=sh.end+3000,ev=log.filter(e=>e.t>=w0&&e.t<=w1);
+          for(let i=0;i<n;i++){
+            const e=ev.find(e=>md.k==='model'?(e.ev==='phase'&&e.idx===i):(e.ev===p.phases[i].event));
+            if(e){st.ph[i].ok++;st.ph[i].err.push(e.t-sh.marks[i]);}}
+          const f=ev.find(e=>e.ev==='fin');if(f){st.fin.ok++;st.fin.err.push(f.t-sh.end);}
+          if(ev.some(e=>e.ev==='abort'))st.aborts++;
+        }
+      }
+      out.push({md,st});
+    }
+  }finally{
+    T.camMode=saved.camMode;T.sm=saved.sm;D=saved.D;M=saved.M;T.swapped=saved.swapped;p.params.useModel=saved.useModel;T.paused=saved.paused;T.person=saved.person;
+  }
+  const fmtE=a=>a.length?(mean(a)>=0?'+':'')+fx(mean(a)/1000,2)+' s':'—';
+  const o=document.createElement('div');o.className='ov';
+  o.innerHTML=`<div class="card"><b>🔬 Resultado con tus ${out[0].st.shots} tiros etiquetados</b>
+  <div class="mut" style="margin:6px 0">"Detectada" = cuántos tiros la app encontró esa fase. "Diferencia" = cuánto antes (−) o después (+) que tu marca, en promedio.</div>
+  ${out.map(({md,st})=>`<h3>${md.l}${md.k==='model'&&activeModel(p)?' (en uso)':md.k==='basic'&&!activeModel(p)?' (en uso)':''}</h3>
+  <table><tr><th>Fase</th><th>Detectada</th><th>Diferencia</th></tr>
+  ${p.phases.map((ph,i)=>`<tr><td>${h(ph.name)}</td><td>${st.ph[i].ok}/${st.shots}</td><td>${fmtE(st.ph[i].err)}</td></tr>`).join('')}
+  <tr><td>🏁 Fin del tiro</td><td>${st.fin.ok}/${st.shots}</td><td>${fmtE(st.fin.err)}</td></tr></table>
+  ${st.aborts?`<div class="mut">⚠️ ${st.aborts} tiro(s) se descartaron como bajada.</div>`:''}`).join('')}
+  ${modes.length<2?'<div class="mut" style="margin-top:8px">No hay detector calibrado vigente: entrená con tus tiros para compararlo.</div>':''}
+  <div class="row" style="margin-top:10px"><div class="sp"></div><button class="btn pri" id="simOk">Cerrar</button></div></div>`;
+  document.body.appendChild(o);$('#simOk',o).onclick=()=>o.remove();
 };
 
 /* ---- Vista de calibración ---- */
@@ -1105,7 +1192,8 @@ VIEWS.calib=()=>{
   <div class="row" style="margin:10px 0"><div class="sp"><div class="bar"><i style="left:0;width:${Math.min(100,nl*10)}%"></i></div></div><b>${nl}/10</b><span class="mut">tiros etiquetados</span></div>
   <button class="btn pri" data-a="startRecord">⏺ Grabar tiros</button>
   ${recs.length?`<div style="margin-top:10px">${recs.map(r=>`<div class="list-item"><div class="sp"><b>${fdate(r.date)}</b><div class="mut">${fx(r.dur/1000,0)} s · ${r.shots.length} tiros etiquetados${r.hasVideo?'':' · solo esqueleto'}</div></div><button class="btn sm pri" data-a="go" data-v="label" data-arg="${r.id}">Etiquetar</button><button class="btn sm danger" data-a="delRec" data-v="${r.id}">🗑</button></div>`).join('')}</div>`:''}
-  <div style="margin-top:10px"><button class="btn" data-a="trainModel" ${nl<3?'disabled style="opacity:.5"':''}>🧠 Entrenar detector con mis tiros</button></div>
+  <div class="row" style="margin-top:10px"><button class="btn" data-a="trainModel" ${nl<3?'disabled style="opacity:.5"':''}>🧠 Entrenar detector</button><button class="btn" data-a="simTest" ${nl<1?'disabled style="opacity:.5"':''}>🔬 Probar con mis tiros</button></div>
+  <div class="mut" style="margin-top:6px">Sensibilidad de la suelta: ${fx(p.params.relDisp,3)} · anclaje: ${fx(p.params.anchorThr,2)}</div>
   ${m?`<div class="mut" style="margin-top:8px">${sigOk?`✅ Detector calibrado con ${m.n} tiros (${fdate(m.date)}).`:'⚠️ Cambiaste las fases después de entrenar: volvé a etiquetar y entrenar.'}</div>
   <div class="chk"><input type="checkbox" data-c="pp" data-k="useModel"${p.params.useModel!==false?' checked':''}>Usar el detector calibrado (si no, se usa la detección básica)</div>`:''}
   </div>
