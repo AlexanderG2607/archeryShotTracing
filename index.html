@@ -75,6 +75,7 @@ th{color:var(--mut);font-weight:500}
 .cells{display:flex;gap:4px;flex-wrap:wrap;margin:4px 0}
 .cell{min-width:40px;height:40px;border-radius:8px;border:1px solid var(--line);background:var(--card);display:flex;align-items:center;justify-content:center;font-weight:700;position:relative;font-size:16px}
 .cell.sel{outline:2px solid var(--acc)}
+.cell.on{background:var(--acc);color:#1a1300;border-color:var(--acc)}
 .cell .dot{position:absolute;top:2px;right:3px;width:7px;height:7px;border-radius:50%}
 .keys{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
 .keys button{padding:10px 0;border-radius:8px;border:1px solid var(--line);background:var(--card2);font-weight:700;font-size:16px}
@@ -255,7 +256,7 @@ VIEWS.home=()=>{
   <div class="grid">
     <button class="big pri" data-a="newSession">🎯 Nueva sesión<small>Tandas, flechas, blanco y puntaje</small></button>
     <button class="big" data-a="freePractice">📹 Práctica libre<small>Solo análisis, sin puntaje</small></button>
-    ${open?`<button class="big" data-a="resume" data-v="${open.id}">⏯ Continuar sesión<small>${h(open.name)} · tanda ${open.curEnd+1}/${open.cfg.tandas}</small></button>`:''}
+    ${open?`<button class="big" data-a="resume" data-v="${open.id}">⏯ Continuar sesión<small>${h(open.name)} · ${endLabel(open,open.curEnd).toLowerCase()}</small></button>`:''}
     <button class="big" data-a="go" data-v="history">📚 Historial<small>${DB.sessions.filter(s=>s.profileId===p.id).length} sesiones · ${nShots} tiros</small></button>
     <button class="big" data-a="go" data-v="profile">⚙️ Perfil y fases<small>${p.phases.length} fases configuradas</small></button>
     <button class="big" data-a="go" data-v="stats">📊 Estadísticas<small>Qué hace bueno a tu tiro</small></button>
@@ -334,16 +335,19 @@ function fmtF(k,v){const F=FEAT[k];return fx(v,F.d)+(F.u&&F.u!==''?(F.u==='s'?' 
 
 VIEWS.newSession=()=>{
   const last=DB.sessions.filter(s=>s.type==='sesion').sort((a,b)=>b.date-a.date)[0];
-  const c=last?{...last.cfg}:{tandas:6,flechas:6,blanco:'wa122',distancia:70,diametro:122,sistema:'x10',xValor:10};
+  const c=last?{...last.cfg}:{rondas:1,tandas:6,flechas:6,blanco:'wa122',distancia:70,diametro:122,sistema:'x10',xValor:10};
+  const vs=valsOf(c).map(String);
   window._nc=c;
   return `${back()}<h1>Nueva sesión</h1><div class="card">
   <label class="f">Nombre</label><input id="ns_name" value="Práctica ${new Date().toLocaleDateString('es-AR')}">
-  <div class="grid"><div><label class="f">Cantidad de tandas</label><input type="number" id="ns_tandas" value="${c.tandas}" min="1" max="60" inputmode="numeric"></div>
+  <div class="grid" style="grid-template-columns:1fr 1fr 1fr;align-items:end"><div><label class="f">Rondas</label><input type="number" id="ns_rondas" value="${nRondas(c)}" min="1" max="10" inputmode="numeric"></div>
+  <div><label class="f">Tandas por ronda</label><input type="number" id="ns_tandas" value="${c.tandas}" min="1" max="60" inputmode="numeric"></div>
   <div><label class="f">Flechas por tanda</label><input type="number" id="ns_flechas" value="${c.flechas}" min="1" max="24" inputmode="numeric"></div></div>
   <label class="f">Tipo de blanco</label><select id="ns_blanco" data-c="nsTarget">${TARGETS.map(t=>`<option value="${t.id}"${c.blanco===t.id?' selected':''}>${t.l}</option>`).join('')}</select>
   <div class="grid"><div><label class="f">Distancia (m)</label><input type="number" id="ns_dist" value="${c.distancia}" min="1" max="150" inputmode="decimal"></div>
   <div><label class="f">Tamaño de la diana (cm)</label><input type="number" id="ns_diam" value="${c.diametro}" min="0" max="200" inputmode="decimal"></div></div>
   <label class="f">Sistema de puntuación</label><select id="ns_sys" data-c="nsSys">${Object.entries(SYS).map(([k,s])=>`<option value="${k}"${c.sistema===k?' selected':''}>${s.l}</option>`).join('')}</select>
+  <label class="f">Valores de la diana (tocá para elegir)</label><div class="cells" id="ns_vals">${ALLV.map(v=>`<div class="cell${vs.includes(String(v))?' on':''}" data-a="nsVal" data-v="${v}">${v}</div>`).join('')}</div>
   <label class="f">Valor de la X (puntos)</label><input type="number" id="ns_x" value="${c.xValor}" min="0" max="20" inputmode="numeric">
   </div><button class="btn pri" style="width:100%;padding:14px" data-a="startSession">Comenzar sesión 🏹</button>`;
 };
@@ -353,21 +357,29 @@ VIEWS.history=()=>{
   return `${back()}<h1>Historial</h1>${ss.length?`<div class="card" style="padding:0">${ss.map(s=>{const t=sesTotals(s);const n=DB.shots.filter(x=>x.sessionId===s.id).length;
   return `<div class="list-item" data-a="go" data-v="session" data-arg="${s.id}"><div class="sp"><b>${h(s.name)}</b><div class="mut">${fdate(s.date)} · ${s.type==='libre'?'Práctica libre':`${s.cfg.distancia} m · ${h(tLabel(s.cfg.blanco))}`} · ${n} tiros</div></div>${s.type==='sesion'?`<b>${t.pts}<span class="mut">/${t.max}</span></b>`:''}</div>`}).join('')}</div>`:'<div class="card mut">Todavía no hay sesiones.</div>'}`;
 };
+const ALLV=['X',10,9,8,7,6,5,4,3,2,1,'M'];
+const valsOf=c=>(c.valores&&c.valores.length?c.valores:SYS[c.sistema].vals);
+const nRondas=c=>c.rondas||1;
+const totalEnds=c=>nRondas(c)*c.tandas;
+function endLabel(s,i){const c=s.cfg,r=Math.floor(i/c.tandas)+1,t=i%c.tandas+1;return nRondas(c)>1?`Ronda ${r}/${nRondas(c)} · Tanda ${t}/${c.tandas}`:`Tanda ${t}/${c.tandas}`;}
 const tLabel=id=>(TARGETS.find(t=>t.id===id)||{l:id}).l;
 function pts(v,cfg){if(v==='X')return +cfg.xValor;if(v==='M'||v==null||v==='')return 0;return +v;}
 function sesTotals(s){
   if(s.type!=='sesion')return{pts:0,max:0,x:0,top:0,ends:[]};
-  const sys=SYS[s.cfg.sistema],top=Math.max(...sys.vals.filter(v=>v!=='M').map(v=>pts(v,s.cfg)));
+  const top=Math.max(...valsOf(s.cfg).filter(v=>v!=='M').map(v=>pts(v,s.cfg)));
   let P_=0,X=0,T=0,arrows=0;const ends=s.ends.map(e=>{let t=0;for(const c of e){if(c.score!=null){t+=pts(c.score,s.cfg);arrows++;if(c.score==='X')X++;if(pts(c.score,s.cfg)===top&&c.score!=='X')T++;}}P_+=t;return t;});
-  return{pts:P_,max:s.cfg.tandas*s.cfg.flechas*top,x:X,top:T,ends,arrows,avg:arrows?P_/arrows:0};
+  return{pts:P_,max:totalEnds(s.cfg)*s.cfg.flechas*top,x:X,top:T,ends,arrows,avg:arrows?P_/arrows:0};
 }
 VIEWS.session=id=>{
   const s=sesById(id);if(!s)return VIEWS.history();
   const shots=DB.shots.filter(x=>x.sessionId===s.id).sort((a,b)=>a.t-b.t);
   const t=sesTotals(s);let run=0;
-  return `${back('history')}<h1>${h(s.name)}</h1><div class="mut">${fdate(s.date)}${s.type==='sesion'?` · ${s.cfg.distancia} m · ${h(tLabel(s.cfg.blanco))}${s.cfg.diametro?` ${s.cfg.diametro} cm`:''} · ${SYS[s.cfg.sistema].l}`:' · Práctica libre'}</div>
+  return `${back('history')}<h1>${h(s.name)}</h1><div class="mut">${fdate(s.date)}${s.type==='sesion'?` · ${s.cfg.distancia} m · ${h(tLabel(s.cfg.blanco))}${s.cfg.diametro?` ${s.cfg.diametro} cm`:''} · ${nRondas(s.cfg)>1?nRondas(s.cfg)+' rondas × ':''}${s.cfg.tandas} tandas × ${s.cfg.flechas} flechas · valores ${valsOf(s.cfg).join(', ')}`:' · Práctica libre'}</div>
   ${s.type==='sesion'?`<div class="card"><div class="row"><div><div class="mut">Total</div><b style="font-size:26px">${t.pts}</b><span class="mut"> / ${t.max}</span></div><div class="sp"></div><div class="kv"><span class="mut">X</span><b>${t.x}</b><span class="mut">Máx. (sin X)</span><b>${t.top}</b><span class="mut">Promedio/flecha</span><b>${fx(t.avg,2)}</b><span class="mut">Bajadas</span><b>${s.letdowns||0}</b></div></div>
-  <table style="margin-top:8px"><tr><th>Tanda</th><th>Flechas</th><th>Suma</th><th>Acum.</th></tr>${s.ends.map((e,i)=>{run+=t.ends[i];return `<tr><td>${i+1}</td><td>${e.map(c=>c.score??'·').join(' ')}</td><td><b>${t.ends[i]}</b></td><td>${run}</td></tr>`}).join('')}</table>
+  <table style="margin-top:8px"><tr><th>Tanda</th><th>Flechas</th><th>Suma</th><th>Acum.</th></tr>${s.ends.map((e,i)=>{run+=t.ends[i];const R_=nRondas(s.cfg),tn=s.cfg.tandas,ri=Math.floor(i/tn);
+   const head=R_>1&&i%tn===0?`<tr><td colspan="4"><b>Ronda ${ri+1}</b></td></tr>`:'';
+   const sub=R_>1&&(i+1)%tn===0?`<tr><td colspan="2" class="mut">Subtotal ronda ${ri+1}</td><td><b>${t.ends.slice(ri*tn,ri*tn+tn).reduce((a,b)=>a+b,0)}</b></td><td></td></tr>`:'';
+   return `${head}<tr><td>${i%tn+1}</td><td>${e.map(c=>c.score??'·').join(' ')}</td><td><b>${t.ends[i]}</b></td><td>${run}</td></tr>${sub}`}).join('')}</table>
   ${!s.done?`<button class="btn pri" style="margin-top:10px" data-a="resume" data-v="${s.id}">Continuar sesión</button>`:''}</div>`:''}
   <h2>Tiros (${shots.length})</h2>${shotList(shots)}
   ${statsBlock(shots)}
@@ -426,10 +438,15 @@ A.phAdd=()=>{P().phases.push({name:'Nueva fase',event:'manual'});save();render()
 A.phReset=()=>{P().phases=defaultPhases();save();render();};
 A.exportData=()=>{const b=new Blob([JSON.stringify(DB,null,1)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='arquero-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();a.remove();toast('Archivo exportado (sin miniaturas)');};
 A.newSession=()=>nav('newSession');
+function setNsVals(v){const l=v.map(String);document.querySelectorAll('#ns_vals .cell').forEach(e=>e.classList.toggle('on',l.includes(e.dataset.v)));}
+A.nsVal=(v,el)=>el.classList.toggle('on');
 A.freePractice=()=>{const s={id:uid(),type:'libre',profileId:P().id,name:'Práctica libre',date:Date.now(),letdowns:0,done:false};DB.sessions.push(s);save();startTrain(s.id);};
 A.startSession=()=>{
-  const g=id=>$(id).value;const cfg={tandas:Math.max(1,+g('#ns_tandas')||1),flechas:Math.max(1,+g('#ns_flechas')||1),blanco:g('#ns_blanco'),distancia:+g('#ns_dist')||0,diametro:+g('#ns_diam')||0,sistema:g('#ns_sys'),xValor:+g('#ns_x')||0};
-  const s={id:uid(),type:'sesion',profileId:P().id,name:g('#ns_name')||'Sesión',date:Date.now(),cfg,ends:Array.from({length:cfg.tandas},()=>Array.from({length:cfg.flechas},()=>({shotId:null,score:null}))),curEnd:0,letdowns:0,done:false};
+  const g=id=>$(id).value;
+  const valores=[...document.querySelectorAll('#ns_vals .cell.on')].map(e=>e.dataset.v).map(v=>v==='X'||v==='M'?v:+v);
+  if(!valores.some(v=>v!=='M'))return toast('Elegí al menos un valor de la diana');
+  const cfg={valores,rondas:Math.max(1,+g('#ns_rondas')||1),tandas:Math.max(1,+g('#ns_tandas')||1),flechas:Math.max(1,+g('#ns_flechas')||1),blanco:g('#ns_blanco'),distancia:+g('#ns_dist')||0,diametro:+g('#ns_diam')||0,sistema:g('#ns_sys'),xValor:+g('#ns_x')||0};
+  const s={id:uid(),type:'sesion',profileId:P().id,name:g('#ns_name')||'Sesión',date:Date.now(),cfg,ends:Array.from({length:totalEnds(cfg)},()=>Array.from({length:cfg.flechas},()=>({shotId:null,score:null}))),curEnd:0,letdowns:0,done:false};
   DB.sessions.push(s);save();startTrain(s.id);
 };
 A.resume=id=>startTrain(id);
@@ -448,9 +465,9 @@ document.addEventListener('change',e=>{
   else if(c==='pp'){const k=el.dataset.k;p.params[k]=el.type==='checkbox'?el.checked:el.type==='number'?+el.value:el.value;save();}
   else if(c==='phn'){p.phases[+el.dataset.i].name=el.value||'Fase';save();}
   else if(c==='phe'){p.phases[+el.dataset.i].event=el.value;save();}
-  else if(c==='nsTarget'){const t=TARGETS.find(x=>x.id===el.value);if(t){if(t.d)$('#ns_diam').value=t.d;$('#ns_sys').value=t.s;$('#ns_x').value=SYS[t.s].x;}}
+  else if(c==='nsTarget'){const t=TARGETS.find(x=>x.id===el.value);if(t){if(t.d)$('#ns_diam').value=t.d;$('#ns_sys').value=t.s;$('#ns_x').value=SYS[t.s].x;setNsVals(SYS[t.s].vals);}}
   else if(c==='vcustom'){p.calib.vcustom=p.calib.vcustom||{};p.calib.vcustom[el.dataset.k]=norm(el.value).split(',').map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);save();}
-  else if(c==='nsSys'){$('#ns_x').value=SYS[el.value].x;}
+  else if(c==='nsSys'){$('#ns_x').value=SYS[el.value].x;setNsVals(SYS[el.value].vals);}
   else if(c==='importData'){const f=el.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.profiles)throw 0;askConfirm('¿Reemplazar todos los datos actuales por los del archivo?',()=>{DB=d;migrate();save();nav('home',null,true);toast('Datos importados');});}catch(x){toast('Archivo inválido');}};r.readAsText(f);}
 });
 
@@ -627,18 +644,24 @@ function processPose(res,now){
   // posición media de la mano de cuerda durante el anclaje
   if(D.st==='anchored'){
     D.invis=strVis?0:(D.invis||0)+1;
-    if(strVis&&!D.moving){D.aN=(D.aN||0)+1;D.ax=(D.ax||0)+sw.x;D.ay=(D.ay||0)+sw.y;D.ux=(D.ux||0)+u.x;D.uy=(D.uy||0)+u.y;}
+    if(strVis&&!D.moving){D.aN=(D.aN||0)+1;D.ax=(D.ax||0)+sw.x;D.ay=(D.ay||0)+sw.y;D.ux=(D.ux||0)+u.x;D.uy=(D.uy||0)+u.y;D.adS=(D.adS||0)+ad;}
   }
   const aPos=D.aN>=3?{x:D.ax/D.aN,y:D.ay/D.aN}:null;
   if(aPos){const ul=Math.hypot(D.ux,D.uy)||1;u={x:D.ux/ul,y:D.uy/ul};nr={x:-u.y,y:u.x};if(nr.y<0)nr={x:-nr.x,y:-nr.y};}
   const back=aPos&&strVis?dot(sub(sw,aPos),u)/s:0;   // + = la mano se va hacia atrás (suelta); − = hacia el arco (bajada)
   if(D.st==='anchored')T.liveBack=back;
   D.moving=aPos&&strVis&&Math.abs(back)>prm.relDisp*0.5;
+  // apertura completa: distancia entre las manos cerca de la habitual en tu anclaje
+  const fd=dist(sw,bw)/s;if(!raised&&(D.st==='idle'||D.st==='released'))D.maxFd=0;else if(raised&&D.st!=='released')D.maxFd=Math.max(D.maxFd||0,fd);T.liveFd=fd;
+  const fullOK=prm.drawLen?fd>=prm.drawLen*0.88:(fd>=0.9&&fd>=(D.maxFd||0)*0.93);
+  const anchOK=strVis&&raised&&ad<prm.anchorThr&&fullOK;
+  const adA=D.aN?D.adS/D.aN:ad;const away=ad-adA;   // cuánto se alejó la mano de la comisura respecto del anclaje
+  const settled=D.st==='anchored'&&aPos&&now-D.anchorT>=400;
   const relCheck=()=>{
-    if(D.st!=='anchored'||!aPos)return false;
-    if(strVis&&back>prm.relDisp)return true;                                   // se desplazó hacia atrás
-    if(strVis&&D.speed>prm.releaseSpeed&&back>prm.relDisp*0.4)return true;      // movimiento rápido hacia atrás
-    if(D.invis>=3&&raised)return true;                                         // la mano desapareció de golpe
+    if(!settled)return false;
+    if(strVis&&back>prm.relDisp&&away>prm.relDisp*0.3)return true;                         // la mano se fue hacia atrás, lejos de la comisura
+    if(strVis&&D.speed>prm.releaseSpeed&&back>prm.relDisp*0.5&&away>0)return true;          // movimiento rápido hacia atrás
+    if(D.invis>=3&&raised)return true;                                                     // la mano desapareció detrás de la cabeza
     return false;};
   const doRelease=t=>{
     if(model){const K=model.K;const from=M.c;M.c=Math.max(M.c,kx.r+1);M.cnt=0;M.rest=0;for(let j=from+1;j<=kx.r+1&&j<K-1;j++)modelEnter(j,t,geo,K-2);}
@@ -646,11 +669,11 @@ function processPose(res,now){
     D.st='released';D.relT=t;D.relRef={sw:aPos||{x:sw.x,y:sw.y},bw:{x:bw.x,y:bw.y},u,n:nr,s};D.relFeat=null;};
   const abort=()=>{const was=D.st;D=Object.assign(newDetector(),{needLower:!raised,prevSw:D.prevSw,prevBw:D.prevBw,prevT:D.prevT});if(was!=='idle'&&was!=='raised')emit('abort',now);else emit('reset',now);};
   if(model){
-    T.relOK=D.st!=='anchored'||!aPos||!strVis||back>prm.relDisp*0.3;
+    T.relOK=settled&&(!strVis||(back>prm.relDisp*0.3&&away>0));T.anchOK=anchOK;
     if(D.st==='anchored'&&aPos&&strVis&&back<-0.25){logEv('bajada (mano hacia el arco)',now);M=newModelState();M.c=model.K-1;D=Object.assign(newDetector(),{needLower:!raised,prevSw:D.prevSw,prevBw:D.prevBw,prevT:D.prevT});emit('abort',now);return pts;}
     modelStep(model,featVec(Pp,bS,sS,s,mo,D.speed||0,D.bspeed||0),now,geo);
     // respaldo: si el modelo no marcó el anclaje pero la mano está quieta en la cara
-    if(M.c>=1&&M.c-1<kx.a&&strVis&&ad<prm.anchorThr&&D.speed<1.5){if(!D.anchorCand)D.anchorCand=now;if(now-D.anchorCand>300){const from=M.c;M.c=kx.a+1;M.cnt=0;for(let j=from+1;j<=kx.a+1;j++)modelEnter(j,D.anchorCand,geo,model.K-2);}}else D.anchorCand=0;
+    if(M.c>=1&&M.c-1<kx.a&&anchOK&&D.speed<1.2){if(!D.anchorCand)D.anchorCand=now;if(now-D.anchorCand>350){const from=M.c;M.c=kx.a+1;M.cnt=0;for(let j=from+1;j<=kx.a+1;j++)modelEnter(j,D.anchorCand,geo,model.K-2);}}else D.anchorCand=0;
     if(D.st==='anchored'&&relCheck())doRelease(now);
   }else switch(D.st){
     case 'idle':
@@ -663,7 +686,7 @@ function processPose(res,now){
       else if(lowFor>400){logEv('bajó el arco',now);abort();}
       break;
     case 'drawing':
-      if(strVis&&ad<prm.anchorThr&&D.speed<1.5){if(!D.anchorCand)D.anchorCand=now;if(now-D.anchorCand>200){D.st='anchored';D.anchorT=D.anchorCand;D.samples=[];D.invis=0;D.aN=0;D.ax=D.ay=D.ux=D.uy=0;emit('anclaje',D.anchorT);}}
+      if(anchOK&&D.speed<1.2){if(!D.anchorCand)D.anchorCand=now;if(now-D.anchorCand>350){D.st='anchored';D.anchorT=D.anchorCand;D.samples=[];D.invis=0;D.aN=0;D.ax=D.ay=D.ux=D.uy=D.adS=0;emit('anclaje',D.anchorT);}}
       else D.anchorCand=0;
       if(lowFor>400){logEv('bajó el arco',now);abort();}
       break;
@@ -818,19 +841,19 @@ A.key=v=>{if(v==='del'){const e=curEnd();if(e&&e[T.sel]){e[T.sel].score=null;con
 A.closeEnd=()=>{T.blocked=true;T.sel=firstEmptyScore();S.shot=null;renderEnd();say('Tanda terminada');};
 A.nextEnd=()=>{
   const s=T.ses;if(!s||s.type!=='sesion')return;
-  if(s.curEnd>=s.cfg.tandas-1){s.done=true;save();say('Sesión terminada');stopTrain();curView={v:'session',arg:s.id};try{history.replaceState(curView,'');}catch(e){}render();return;}
-  s.curEnd++;T.blocked=false;T.sel=0;S.shot=null;D=Object.assign(newDetector(),{needLower:true});M=newModelState();T.mode='live';save();renderEnd();updatePrompt();say('Tanda '+(s.curEnd+1));
+  if(s.curEnd>=totalEnds(s.cfg)-1){s.done=true;save();say('Sesión terminada');stopTrain();curView={v:'session',arg:s.id};try{history.replaceState(curView,'');}catch(e){}render();return;}
+  s.curEnd++;T.blocked=false;T.sel=0;S.shot=null;D=Object.assign(newDetector(),{needLower:true});M=newModelState();T.mode='live';save();renderEnd();updatePrompt();const tn=s.cfg.tandas;if(nRondas(s.cfg)>1&&s.curEnd%tn===0){say('Ronda '+(s.curEnd/tn+1));toast('🔁 Comienza la ronda '+(s.curEnd/tn+1),3000);}else say('Tanda '+(s.curEnd%tn+1));
 };
 A.finishSession=()=>askConfirm('¿Terminar la sesión ahora?',()=>{T.ses.done=true;save();stopTrain();curView={v:'session',arg:T.ses.id};try{history.replaceState(curView,'');}catch(e){}render();});
 function renderEnd(){
   const el=$('#endPanel');const s=T.ses;
   if(!s||s.type!=='sesion'){el.innerHTML=`<div class="row end"><b>Práctica libre</b><span class="mut">${DB.shots.filter(x=>x.sessionId===(s&&s.id)).length} tiros</span><div class="sp"></div><button class="btn sm" data-a="finishFree">Terminar</button></div>`;$('#advBtn').textContent='▶ Fase';return;}
-  const e=curEnd(),tt=sesTotals(s),sys=SYS[s.cfg.sistema];
-  el.innerHTML=`<div class="end"><div class="row"><b>Tanda ${s.curEnd+1}/${s.cfg.tandas}</b><span class="mut">· ${s.cfg.distancia} m</span><div class="sp"></div><span>Tanda <b>${tt.ends[s.curEnd]}</b> · Total <b>${tt.pts}</b></span></div>
+  const e=curEnd(),tt=sesTotals(s),vals=valsOf(s.cfg);
+  el.innerHTML=`<div class="end"><div class="row"><b>${endLabel(s,s.curEnd)}</b><span class="mut">· ${s.cfg.distancia} m</span><div class="sp"></div><span>Tanda <b>${tt.ends[s.curEnd]}</b> · Total <b>${tt.pts}</b></span></div>
   <div class="cells">${e.map((c,i)=>`<div class="cell${i===T.sel?' sel':''}" data-a="selCell" data-v="${i}">${c.score??''}${c.shotId?`<span class="dot" style="background:${rateCol(c.shotId)}"></span>`:''}</div>`).join('')}</div>
   ${T.blocked?`<div class="mut" style="margin:2px 0 4px">Tanda completa: cargá los puntajes y pasá a la siguiente.</div>`:''}
-  ${T.blocked||T.showKeys?`<div class="keys">${sys.vals.map(v=>`<button data-a="key" data-v="${v}">${v}</button>`).join('')}<button data-a="key" data-v="del">⌫</button></div>`:''}
-  <div class="row" style="margin-top:6px">${T.blocked?`<button class="btn pri sm" data-a="nextEnd">${s.curEnd>=s.cfg.tandas-1?'Terminar sesión ✔':'Siguiente tanda ▶'}</button>`:`<button class="btn sm" data-a="closeEnd">Cerrar tanda</button><button class="btn sm" data-a="toggleKeys">${T.showKeys?'Ocultar':'🎯 Anotar'}</button>`}<div class="sp"></div><button class="btn sm" data-a="finishSession">Finalizar sesión</button></div></div>`;
+  ${T.blocked||T.showKeys?`<div class="keys">${vals.map(v=>`<button data-a="key" data-v="${v}">${v}</button>`).join('')}<button data-a="key" data-v="del">⌫</button></div>`:''}
+  <div class="row" style="margin-top:6px">${T.blocked?`<button class="btn pri sm" data-a="nextEnd">${s.curEnd>=totalEnds(s.cfg)-1?'Terminar sesión ✔':(s.curEnd+1)%s.cfg.tandas===0?'Siguiente ronda ▶':'Siguiente tanda ▶'}</button>`:`<button class="btn sm" data-a="closeEnd">Cerrar tanda</button><button class="btn sm" data-a="toggleKeys">${T.showKeys?'Ocultar':'🎯 Anotar'}</button>`}<div class="sp"></div><button class="btn sm" data-a="finishSession">Finalizar sesión</button></div></div>`;
   $('#advBtn').textContent=T.blocked?'▶ Sig. tanda':'▶ Fase';
 }
 A.finishFree=()=>{if(T.ses){T.ses.done=true;save();const id=T.ses.id;stopTrain();curView={v:'session',arg:id};try{history.replaceState(curView,'');}catch(e){}render();}};
@@ -944,7 +967,7 @@ function handleVoice(alts){
   if(k==='bueno'||k==='medio'||k==='malo'||k==='perfecto')rateLast(k);
   else if(k==='siguiente'){A.advance();return;}
   if(T.ses&&T.ses.type==='sesion'){
-    const sys=SYS[T.ses.cfg.sistema].vals.map(String);
+    const sys=valsOf(T.ses.cfg).map(String);
     const rest=c?(' '+t+' ').replace(' '+c.a+' ',' ').trim():t;
     for(const v of scoreTokens(rest))if(sys.includes(String(v)))setScore(v);
   }
@@ -969,7 +992,7 @@ function modelStep(m,f,t,geo){
   const ll=nbLL(m,f),K=m.K,n=K-2,c=M.c;
   if(c===K-1){if(ll[0]>=ll[K-1]){if(++M.cnt>=5){M.c=0;M.cnt=0;}}else M.cnt=0;return;}
   let nx=c+1;if(c>=1&&c+2<=K-1&&ll[c+2]>ll[c+1]+0.5&&ll[c+2]>ll[c]+0.5)nx=c+2;
-  const kr=keyIdx(P()).r+1;if(nx>=kr&&c<kr&&T.relOK===false)nx=Math.min(nx,kr-1);
+  const kk=keyIdx(P()),ka=kk.a+1,kr=kk.r+1;if(nx>=kr&&c<kr&&T.relOK===false)nx=Math.min(nx,kr-1);if(nx>=ka&&c<ka&&T.anchOK===false)nx=Math.min(nx,ka-1);if(nx<=c)M.cnt=0;
   if(nx>c&&ll[nx]>ll[c]){if(!M.cnt)M.first=t;M.cnt++;const need=c===0?4:2;
     if(M.cnt>=need){const t0=M.first;M.cnt=0;M.rest=0;M.c=nx;for(let j=c+1;j<=nx;j++)modelEnter(j,t0,geo,n);return;}}
   else M.cnt=0;
@@ -983,7 +1006,7 @@ function modelEnter(j,t,geo,n){
   const k=keyIdx(P());
   if(j===n+1){if(D.st==='released'&&!D.relFeat&&geo)D.relFeat=relFeatures(geo.sw,geo.bw);emit('fin',t);D.st='idle';D.needLower=true;return;}
   const pi=j-1;
-  if(pi===k.a){D.st='anchored';D.anchorT=t;D.samples=[];D.thumbDone=false;D.lastAnchSw=null;D.aN=0;D.ax=D.ay=D.ux=D.uy=0;D.invis=0;D.moving=false;}
+  if(pi===k.a){D.st='anchored';D.anchorT=t;D.samples=[];D.thumbDone=false;D.lastAnchSw=null;D.aN=0;D.ax=D.ay=D.ux=D.uy=D.adS=0;D.invis=0;D.moving=false;}
   if(pi===k.r){const u0=sub(geo.sw,geo.bw),L=len(u0)||1;D.st='released';D.relT=t;D.relRef={sw:D.lastAnchSw||{x:geo.sw.x,y:geo.sw.y},bw:{x:geo.bw.x,y:geo.bw.y},u:D.lastU||{x:u0.x/L,y:u0.y/L},n:D.lastN||{x:0,y:1},s:geo.s};D.relFeat=null;}
   emit('phase',t,pi);
 }
@@ -1096,7 +1119,7 @@ A.trainModel=async()=>{
   const nShots=recs.reduce((a,r)=>a+r.shots.length,0);
   if(nShots<3)return toast('Etiquetá al menos 3 tiros (ideal 10 o más)');
   toast('🧠 Entrenando…',6000);
-  const n=p.phases.length,K=n+2,X=Array.from({length:K},()=>[]),k=keyIdx(p),adA=[],peaks=[],noise=[],backs=[];
+  const n=p.phases.length,K=n+2,X=Array.from({length:K},()=>[]),k=keyIdx(p),adA=[],fdA=[],peaks=[],noise=[],backs=[];
   const bS=SIDE[p.bowHand],sS=SIDE[p.bowHand==='L'?'R':'L'];
   for(const r of recs){
     const d=await idbGet('rec',r.id);if(!d)continue;
@@ -1112,7 +1135,7 @@ A.trainModel=async()=>{
       for(let i=0;i<N;i++){const t=times[i];let c=-1;
         if(t<m[0]){if(t>m[0]-2000)c=0;}else if(t>=sh.end){if(t<sh.end+1500)c=K-1;}else{c=1;for(let j=0;j<n;j++)if(t>=m[j])c=j+1;}
         if(c>=0){X[c].push(feats[i]);inShot[i]=1;}
-        if(c===k.a+1)adA.push(feats[i][10]);
+        if(c===k.a+1&&times[i]>=m[k.a]+150){adA.push(feats[i][10]);fdA.push(feats[i][13]);}
         if(Math.abs(t-m[k.r])<200)pk=Math.max(pk,spd[i]);}
       if(pk)peaks.push(pk);
       // desplazamiento hacia atrás en la suelta vs. ruido durante el anclaje
@@ -1130,9 +1153,9 @@ A.trainModel=async()=>{
   for(const a of X){const mu=new Array(dim).fill(0),v=new Array(dim).fill(0);for(const f of a)for(let i=0;i<dim;i++)mu[i]+=f[i]/a.length;for(const f of a)for(let i=0;i<dim;i++)v[i]+=(f[i]-mu[i])**2/a.length;
     mean_.push(mu.map(x=>+x.toFixed(4)));vr.push(v.map(x=>+Math.max(x,0.004).toFixed(5)));}
   p.calib.model={K,mean:mean_,vr,n:nShots,date:Date.now(),sig:phSig(p),frames:X.map(a=>a.length)};
-  if(adA.length>10){adA.sort((a,b)=>a-b);p.params.anchorThr=+Math.min(0.8,Math.max(0.15,adA[Math.floor(adA.length*0.9)]*1.25)).toFixed(2);}
+  if(adA.length>10){adA.sort((a,b)=>a-b);p.params.anchorThr=+Math.min(0.5,Math.max(0.15,adA[Math.floor(adA.length*0.8)]*1.3)).toFixed(2);fdA.sort((a,b)=>a-b);p.params.drawLen=+fdA[Math.floor(fdA.length/2)].toFixed(3);}
   if(peaks.length>=2){peaks.sort((a,b)=>a-b);p.params.releaseSpeed=+Math.min(8,Math.max(1,peaks[Math.floor(peaks.length/2)]*0.5)).toFixed(1);}
-  if(backs.length>=2){backs.sort((a,b)=>a-b);noise.sort((a,b)=>a-b);const nz=noise.length?noise[Math.floor(noise.length*0.95)]:0;p.params.relDisp=+Math.min(0.4,Math.max(0.02,Math.min(backs[0]*0.6,backs[Math.floor(backs.length/2)]*0.45),nz*1.5)).toFixed(3);}
+  if(backs.length>=2){backs.sort((a,b)=>a-b);noise.sort((a,b)=>a-b);const nz=noise.length?noise[Math.floor(noise.length*0.95)]:0;p.params.relDisp=+Math.min(0.4,Math.max(0.05,Math.min(backs[0]*0.6,backs[Math.floor(backs.length/2)]*0.45),nz*1.5)).toFixed(3);}
   p.params.useModel=true;save();render();toast(`✅ Detector calibrado con ${nShots} tiros`,3500);
 };
 
