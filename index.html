@@ -643,17 +643,19 @@ function processPose(res,now){
   const u0=sub(sw,bw),L0=len(u0)||1;let u={x:u0.x/L0,y:u0.y/L0};let nr={x:-u.y,y:u.x};if(nr.y<0)nr={x:-nr.x,y:-nr.y};
   // posición media de la mano de cuerda durante el anclaje
   if(D.st==='anchored'){
-    D.invis=strVis?0:(D.invis||0)+1;
+    if(strVis){D.invis=0;D.invisSince=0;}else{D.invis=(D.invis||0)+1;if(!D.invisSince)D.invisSince=now;}
     if(strVis&&!D.moving){D.aN=(D.aN||0)+1;D.ax=(D.ax||0)+sw.x;D.ay=(D.ay||0)+sw.y;D.ux=(D.ux||0)+u.x;D.uy=(D.uy||0)+u.y;D.adS=(D.adS||0)+ad;}
   }
   const aPos=D.aN>=3?{x:D.ax/D.aN,y:D.ay/D.aN}:null;
   if(aPos){const ul=Math.hypot(D.ux,D.uy)||1;u={x:D.ux/ul,y:D.uy/ul};nr={x:-u.y,y:u.x};if(nr.y<0)nr={x:-nr.x,y:-nr.y};}
   const back=aPos&&strVis?dot(sub(sw,aPos),u)/s:0;   // + = la mano se va hacia atrás (suelta); − = hacia el arco (bajada)
-  if(D.st==='anchored')T.liveBack=back;
+  if(D.st==='anchored'){T.liveBack=back;if(strVis)D.lastBack=back;}
   D.moving=aPos&&strVis&&Math.abs(back)>prm.relDisp*0.5;
   // apertura completa: distancia entre las manos cerca de la habitual en tu anclaje
-  const fd=dist(sw,bw)/s;if(!raised&&(D.st==='idle'||D.st==='released'))D.maxFd=0;else if(raised&&D.st!=='released')D.maxFd=Math.max(D.maxFd||0,fd);T.liveFd=fd;
-  const fullOK=prm.drawLen?fd>=prm.drawLen*0.88:(fd>=0.9&&fd>=(D.maxFd||0)*0.93);
+  const fd=dist(sw,bw)/s;if(!raised&&(D.st==='idle'||D.st==='released')){D.maxFd=0;D.minFd=null;}else if(raised&&D.st!=='released'&&strVis){D.maxFd=Math.max(D.maxFd||0,fd);D.minFd=D.minFd==null?fd:Math.min(D.minFd,fd);}T.liveFd=fd;
+  // tiene que haber una apertura real: las manos se separaron al menos 0,3 torsos desde que levantaste el arco
+  const drawOK=D.minFd!=null&&fd-D.minFd>=0.3;
+  const fullOK=drawOK&&(prm.drawLen?fd>=prm.drawLen*0.92:(fd>=0.9&&fd>=(D.maxFd||0)*0.93));
   const anchOK=strVis&&raised&&ad<prm.anchorThr&&fullOK;
   const adA=D.aN?D.adS/D.aN:ad;const away=ad-adA;   // cuánto se alejó la mano de la comisura respecto del anclaje
   const settled=D.st==='anchored'&&aPos&&now-D.anchorT>=400;
@@ -661,7 +663,7 @@ function processPose(res,now){
     if(!settled)return false;
     if(strVis&&back>prm.relDisp&&away>prm.relDisp*0.3)return true;                         // la mano se fue hacia atrás, lejos de la comisura
     if(strVis&&D.speed>prm.releaseSpeed&&back>prm.relDisp*0.5&&away>0)return true;          // movimiento rápido hacia atrás
-    if(D.invis>=3&&raised)return true;                                                     // la mano desapareció detrás de la cabeza
+    if(D.invisSince&&now-D.invisSince>=250&&raised&&(D.lastBack==null||D.lastBack>-0.05))return true;   // la mano desapareció detrás de la cabeza (no un parpadeo)
     return false;};
   const doRelease=t=>{
     if(model){const K=model.K;const from=M.c;M.c=Math.max(M.c,kx.r+1);M.cnt=0;M.rest=0;for(let j=from+1;j<=kx.r+1&&j<K-1;j++)modelEnter(j,t,geo,K-2);}
@@ -674,7 +676,7 @@ function processPose(res,now){
     modelStep(model,featVec(Pp,bS,sS,s,mo,D.speed||0,D.bspeed||0),now,geo);
     // respaldo: si el modelo no marcó el anclaje pero la mano está quieta en la cara
     if(M.c>=1&&M.c-1<kx.a&&anchOK&&D.speed<1.2){if(!D.anchorCand)D.anchorCand=now;if(now-D.anchorCand>350){const from=M.c;M.c=kx.a+1;M.cnt=0;for(let j=from+1;j<=kx.a+1;j++)modelEnter(j,D.anchorCand,geo,model.K-2);}}else D.anchorCand=0;
-    if(D.st==='anchored'&&relCheck())doRelease(now);
+    if(D.st==='anchored'&&relCheck())doRelease(D.invisSince&&!strVis?D.invisSince:now);
   }else switch(D.st){
     case 'idle':
       if(D.needLower){if(lowFor>300)D.needLower=false;break;}
@@ -691,7 +693,7 @@ function processPose(res,now){
       if(lowFor>400){logEv('bajó el arco',now);abort();}
       break;
     case 'anchored':
-      if(relCheck()){doRelease(now);break;}
+      if(relCheck()){doRelease(D.invisSince&&!strVis?D.invisSince:now);break;}
       if(aPos&&strVis&&back<-0.25){logEv('bajada (mano hacia el arco)',now);abort();break;}
       if(lowFor>300){logEv('bajó el arco sin suelta',now);abort();break;}
       break;
@@ -802,10 +804,11 @@ function finalizeShot(t){
 function endRating(){T.mode='live';updatePrompt();}
 function rateLast(r){
   const s=shotById(T.lastShotId);if(!s){toast('Todavía no hay un tiro para calificar');return;}
+  if((r==='perfecto'&&s.perfect)||(r!=='perfecto'&&s.rating===r&&!s.perfect)){if(T.mode==='rating')endRating();return;}   // ya estaba así: no repetir
   if(r==='perfecto'){s.perfect=true;s.rating='bueno';}else{s.rating=r;if(r!=='bueno')s.perfect=false;}
   save();
   const lbl={bueno:'👍 Bueno',medio:'✋ Medio',malo:'👎 Malo',perfecto:'⭐ Perfecto'}[r];
-  toast(lbl+(r==='perfecto'?' · agregado a tu referencia':''));say(r==='perfecto'?'Perfecto, guardado como referencia':r);
+  toast(lbl+(r==='perfecto'?' · agregado a tu referencia':''));beep(r);
   T.ignoreVoiceUntil=performance.now()+1500;
   if(T.mode==='rating')endRating();renderLast();
 }
@@ -946,7 +949,11 @@ function startVoice(){
   if(!SR){toast('Este navegador no soporta comandos de voz');return;}
   try{rec=new SR();}catch(e){return;}
   rec.lang='es-AR';rec.continuous=true;rec.interimResults=false;rec.maxAlternatives=3;
-  rec.onresult=e=>{for(let i=e.resultIndex;i<e.results.length;i++)if(e.results[i].isFinal)handleVoice([...e.results[i]].map(a=>a.transcript));};
+  // En Android, Chrome a veces reenvía resultados ya procesados: se procesa cada resultado una sola vez
+  rec.onstart=()=>{T.vDone=0;};
+  rec.onresult=e=>{for(let i=Math.max(e.resultIndex,T.vDone||0);i<e.results.length;i++){if(!e.results[i].isFinal)continue;T.vDone=i+1;
+    const alts=[...e.results[i]].map(a=>a.transcript),key=norm(alts[0]||'').trim(),now=performance.now();
+    if(key&&key===T.vLast&&now-T.vLastT<2500)continue;T.vLast=key;T.vLastT=now;handleVoice(alts);}};
   rec.onerror=e=>{if(e.error==='not-allowed'||e.error==='service-not-allowed'){T.voiceOn=false;toast('Micrófono no permitido: la voz queda desactivada');}};
   rec.onend=()=>{if(T.voiceOn&&T.running)setTimeout(()=>{try{rec.start();}catch(e){}},250);};
   T.voiceOn=true;try{rec.start();}catch(e){}
@@ -972,9 +979,16 @@ function handleVoice(alts){
     for(const v of scoreTokens(rest))if(sys.includes(String(v)))setScore(v);
   }
 }
+/* Tonos cortos (no se confunden con comandos de voz) */
+let actx=null;document.addEventListener('click',()=>{try{if(!actx)actx=new(window.AudioContext||window.webkitAudioContext)();if(actx.state==='suspended')actx.resume();}catch(e){}},{capture:true});
+function beep(kind){
+  if(!P().params.speak||!actx)return;
+  const seq={bueno:[880,1175],perfecto:[880,1175,1568],medio:[660,660],malo:[440,330]}[kind]||[880];
+  try{let t=actx.currentTime;for(const f of seq){const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=f;o.type='sine';g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.3,t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+0.16);o.connect(g).connect(actx.destination);o.start(t);o.stop(t+0.18);t+=0.17;}}catch(e){}
+}
 function say(text){
   if(!P().params.speak||!window.speechSynthesis)return;
-  try{const u=new SpeechSynthesisUtterance(text);u.lang='es-AR';u.rate=1.1;u.onend=()=>{T.ignoreVoiceUntil=performance.now()+300;};speechSynthesis.cancel();speechSynthesis.speak(u);T.ignoreVoiceUntil=performance.now()+900;}catch(e){}
+  try{const u=new SpeechSynthesisUtterance(text);u.lang='es-AR';u.rate=1.1;u.onend=()=>{T.ignoreVoiceUntil=performance.now()+1500;};speechSynthesis.cancel();speechSynthesis.speak(u);T.ignoreVoiceUntil=performance.now()+2500;}catch(e){}
 }
 
 /* ========= CALIBRACIÓN ========= */
@@ -1023,7 +1037,7 @@ function recStart(){
     try{mr=new MediaRecorder(T.stream,mime?{mimeType:mime,videoBitsPerSecond:1500000}:{videoBitsPerSecond:1500000});}catch(e){mr=null;}}
   T.rec={on:true,t0:performance.now(),frames:[],chunks:[],mr,mime:mr?(mr.mimeType||mime):''};
   if(mr){mr.ondataavailable=e=>{if(e.data&&e.data.size)T.rec.chunks.push(e.data);};mr.onstart=()=>{T.rec.t0=performance.now();T.rec.frames=[];};try{mr.start(1000);}catch(e){T.rec.mr=null;}}
-  say('Grabando');
+  say('Grabación iniciada');
 }
 async function recStop(){
   const r=T.rec;if(!r||!r.on)return;r.on=false;
