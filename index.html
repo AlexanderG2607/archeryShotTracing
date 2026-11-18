@@ -90,6 +90,7 @@ th{color:var(--mut);font-weight:500}
 .lab{position:relative;background:#000;border-radius:10px;overflow:hidden;margin-top:10px;max-height:60vh}
 .lab video,.lab canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
 button[disabled]{pointer-events:none}
+.gph{display:flex;gap:3px;flex-wrap:wrap;margin-top:4px}.gph img{width:38px;height:38px;object-fit:cover;border-radius:6px;background:#000}
 .kv{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:14px}
 </style>
 </head>
@@ -241,7 +242,7 @@ window.addEventListener('popstate',e=>{if(!$('#train').hidden){stopTrain();}curV
 function render(){
   $('#train').hidden=true;$('#view').hidden=false;
   if(curView.v!=='label'&&L){if(L.url)URL.revokeObjectURL(L.url);L=null;}
-  const f=VIEWS[curView.v]||VIEWS.home;$('#view').innerHTML=f(curView.arg);window.scrollTo(0,0);if(curView.v==='profile')showEstimate();
+  const f=VIEWS[curView.v]||VIEWS.home;$('#view').innerHTML=f(curView.arg);window.scrollTo(0,0);if(curView.v==='profile')showEstimate();if(curView.v==='calib')loadGestPhotos();
 }
 const back=(to='home')=>`<button class="btn sm" data-a="go" data-v="${to}">← Volver</button>`;
 
@@ -808,21 +809,40 @@ function rateLast(r){
   if(r==='perfecto'){s.perfect=true;s.rating='bueno';}else{s.rating=r;if(r!=='bueno')s.perfect=false;}
   save();
   const lbl={bueno:'👍 Bueno',medio:'✋ Medio',malo:'👎 Malo',perfecto:'⭐ Perfecto'}[r];
-  toast(lbl+(r==='perfecto'?' · agregado a tu referencia':''));beep(r);
+  toast(lbl+(r==='perfecto'?' · agregado a tu referencia':''));say({bueno:'Bueno',medio:'Medio',malo:'Malo',perfecto:'Perfecto'}[r]);
   T.ignoreVoiceUntil=performance.now()+1500;
   if(T.mode==='rating')endRating();renderLast();
 }
 A.rate=r=>rateLast(r);
+/* ---- Detección de la mano: recorte ampliado alrededor de la muñeca (funciona a varios metros) ---- */
+const gcv=document.createElement('canvas');gcv.width=gcv.height=256;const gctx=gcv.getContext('2d');
+function detectHand(now){
+  if(!T.gest||vid.readyState<2)return null;
+  const Pp=T.sm;let src=vid,box=null;
+  if(Pp&&Pp[15]&&Pp[16]&&T.frame%3!==2){
+    const{s}=torsoScale(Pp);
+    const arms=[[13,15],[14,16]].sort((a,b)=>Pp[a[1]].y-Pp[b[1]].y);   // primero la mano más alta
+    const[e,w]=arms[T.gAlt?1:0],W_=Pp[w],E_=Pp[e];
+    const cx=W_.x+(W_.x-E_.x)*0.4,cy=W_.y+(W_.y-E_.y)*0.4,side=Math.max(90,s*0.95);
+    gctx.fillStyle='#000';gctx.fillRect(0,0,256,256);
+    try{gctx.drawImage(vid,cx-side/2,cy-side/2,side,side,0,0,256,256);}catch(x){return null;}
+    src=gcv;box={x:cx-side/2,y:cy-side/2,side};
+  }
+  let r;try{r=T.gest.recognizeForVideo(src,now);}catch(x){return null;}
+  const l=r&&r.landmarks&&r.landmarks[0];
+  if(!l){if(box)T.gAlt=!T.gAlt;T.handPts=null;return null;}
+  const hd=r.handedness&&r.handedness[0]&&r.handedness[0][0]&&r.handedness[0][0].categoryName;
+  T.handPts=l.map(q=>box?{x:box.x+q.x*box.side,y:box.y+q.y*box.side}:{x:q.x*vid.videoWidth,y:q.y*vid.videoHeight});
+  return{l,hd,g:r.gestures&&r.gestures[0]&&r.gestures[0][0],box};
+}
 function handleGesture(now){
   if(!T.gest||!P().params.gestures||T.frame%2)return;
-  let r;try{r=T.gest.recognizeForVideo(vid,now);}catch(e){return;}
-  const l=r&&r.landmarks&&r.landmarks[0];T.handPts=l||null;
-  const g=r&&r.gestures&&r.gestures[0]&&r.gestures[0][0];
+  const d=detectHand(now);
   const map={Thumb_Up:'bueno',Thumb_Down:'malo',Open_Palm:'medio',Victory:'perfecto'};
   const G=P().calib.gestures||{};
   let key=null;
-  if(l){const hd=r.handedness&&r.handedness[0]&&r.handedness[0][0]&&r.handedness[0][0].categoryName;key=gestClassify(handVec(l,hd));}
-  if(!key&&g&&g.score>0.6&&map[g.categoryName]&&!(G[map[g.categoryName]]||[]).length)key=map[g.categoryName];
+  if(d){key=gestClassify(handVec(d.l,d.hd));
+    if(!key&&d.g&&d.g.score>0.6&&map[d.g.categoryName]&&!(G[map[d.g.categoryName]]||[]).length)key=map[d.g.categoryName];}
   if(key){if(T.g.name===key){if(now-T.g.since>700){T.g={name:null,since:0};rateLast(key);}}else T.g={name:key,since:now};}
   else T.g={name:null,since:0};
 }
@@ -918,7 +938,7 @@ function draw(pts){
   if(mo&&mo.v>0.3){const prm=P().params;ctx.strokeStyle=D.st==='anchored'?'#3ddc84':'rgba(255,107,214,.7)';ctx.lineWidth=lw;ctx.setLineDash([lw*3,lw*3]);ctx.beginPath();ctx.arc(mo.x,mo.y,prm.anchorThr*s,0,7);ctx.stroke();ctx.setLineDash([]);}
   // línea de fuerza en anclaje
   if(D.st==='anchored'){ctx.strokeStyle='rgba(240,180,41,.9)';ctx.lineWidth=lw;ctx.beginPath();ctx.moveTo(Pp[bS.wr].x,Pp[bS.wr].y);const u=sub(Pp[sS.wr],Pp[bS.wr]);ctx.lineTo(Pp[bS.wr].x+u.x*1.5,Pp[bS.wr].y+u.y*1.5);ctx.stroke();}
-  if(T.handPts&&(T.camMode==='gesture'||T.mode==='rating')){ctx.fillStyle='#4fc3ff';for(const q of T.handPts){ctx.beginPath();ctx.arc(q.x*cv.width,q.y*cv.height,lw*2.2,0,7);ctx.fill();}}
+  if(T.handPts&&(T.camMode==='gesture'||T.mode==='rating')){ctx.fillStyle='#4fc3ff';for(const q of T.handPts){ctx.beginPath();ctx.arc(q.x,q.y,lw*2.2,0,7);ctx.fill();}}
   // consejo en vivo durante la puntería
   const now=performance.now();
   if(pts.sample&&now-T.hintT>600){T.hintT=now;const cmp=compare(pts.sample,reference(P().id));const d=cmp&&cmp.devs.find(x=>Math.abs(x.z)>2&&x.k!=='stability');$('#hint').textContent=d?'⚠️ '+devText(d):(cmp?'✅ Como tu referencia':'');}
@@ -1063,9 +1083,12 @@ function renderCalPanel(){
     <button class="btn ${on?'danger':'pri'}" style="width:100%;padding:16px;margin:8px 0;font-size:18px" data-a="recToggle">${on?'⏹ Detener':'⏺ Grabar'}</button>
     <div class="mut">Decí <b>"${h(primaryWord('grabar'))}"</b> para empezar y <b>"${h(primaryWord('detener'))}"</b> para terminar. Podés hacer varios tiros en una misma grabación (5 a 10 está bien). Tiros etiquetados en el perfil: <b>${labeledCount(P())}</b>/10.</div>
     <button class="btn sm" style="margin-top:8px" data-a="exitTrain">Terminar e ir a etiquetar</button>`;}
-  else if(T.camMode==='gesture'&&T.gcal){const g=T.gcal,key=g.list[g.i];if(!key)return;
-    el.innerHTML=`<b>Gesto para «${RLBL[key]}» (${g.i+1}/${g.list.length})</b><div style="font-size:26px;margin:6px 0;letter-spacing:4px">${'●'.repeat(g.samples.length)}${'○'.repeat(g.need-g.samples.length)}</div>
-    <div class="mut">Mostrá la mano con el gesto que quieras usar (sugerido ${RSUG[key]}) y mantenela quieta 1 segundo. Cuando suene el aviso, bajala y repetí.</div>
+  else if(T.camMode==='gesture'&&T.gcal){const g=T.gcal,key=g.list[g.i];
+    if(!key){el.innerHTML='<b>✅ Calibración terminada</b>';return;}
+    el.innerHTML=`<div class="row"><b>Gesto «${RLBL[key]}» ${RSUG[key]} (${g.i+1}/${g.list.length})</b><div class="sp"></div><span id="gcSeen" class="mut"></span></div>
+    <div style="font-size:64px;font-weight:800;text-align:center;line-height:1.1;color:var(--acc)">${g.count||'…'}</div>
+    <div style="text-align:center;letter-spacing:3px;font-size:18px">${'●'.repeat(g.samples.length)}${'○'.repeat(g.need-g.samples.length)}</div>
+    <div class="mut">Hacé el gesto que quieras usar para «${RLBL[key]}» cuando termine la cuenta "3, 2, 1". Movelo un poco entre foto y foto (más alto, más bajo, girado) para que aprenda variantes. Se toman ${g.need} fotos.</div>
     <div class="row" style="margin-top:8px"><button class="btn sm" data-a="exitTrain">Cancelar</button></div>`;}
 }
 
@@ -1074,25 +1097,56 @@ function handVec(l,hd){const w=l[0],m=l[9];const sc=Math.hypot(m.x-w.x,m.y-w.y)|
 const vdist=(a,b)=>{let s=0;for(let i=0;i<a.length;i++)s+=(a[i]-b[i])**2;return Math.sqrt(s/a.length);};
 function gestClassify(v){const G=P().calib.gestures||{};let best=null,bd=1e9;for(const r in G)for(const s of G[r]||[]){const d=vdist(v,s);if(d<bd){bd=d;best=r;}}return best&&bd<(P().calib.gThr||0.35)?best:null;}
 function computeGThr(){const G=P().calib.gestures;const ds=[];for(const k in G){const a=G[k]||[];for(let i=0;i<a.length;i++){let m=1e9;for(let j=0;j<a.length;j++)if(i!==j)m=Math.min(m,vdist(a[i],a[j]));if(m<1e9)ds.push(m);}}ds.sort((a,b)=>a-b);const med=ds.length?ds[Math.floor(ds.length/2)]:0.1;P().calib.gThr=+Math.max(0.25,med*3).toFixed(3);}
-A.gestCal=r=>{const list=r==='all'?['bueno','medio','malo','perfecto']:[r];T.gcal={list,i:0,samples:[],need:5,stable:0,prev:null,gone:true,goneSince:0,cool:0};T.camMode='gesture';T.retry=()=>A.gestCal(r);openCam();};
-A.gestClear=r=>{delete P().calib.gestures[r];computeGThr();save();render();};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function sayWait(text,max=4000){return new Promise(res=>{if(!window.speechSynthesis){setTimeout(res,600);return;}
+  let done=false;const fin=()=>{if(!done){done=true;res();}};
+  try{const u=new SpeechSynthesisUtterance(text);u.lang='es-AR';u.rate=1.05;u.onend=fin;u.onerror=fin;speechSynthesis.cancel();speechSynthesis.speak(u);}catch(e){fin();}
+  setTimeout(fin,max);});}
+A.gestCal=r=>{
+  const list=r==='all'?['bueno','medio','malo','perfecto']:[r];
+  T.gcal={list,i:0,samples:[],photos:[],need:10,count:'',status:'',run:uid()};
+  T.camMode='gesture';T.retry=()=>A.gestCal(r);
+  openCam().then(()=>{if(T.gcal&&T.running&&T.gest)runGestCal(T.gcal);});
+};
+A.gestClear=r=>{const p=P();delete p.calib.gestures[r];for(let i=0;i<20;i++)idbDel('t',`g_${p.id}_${r}_${i}`);computeGThr();save();render();};
 function gestCalStep(now){
-  const g=T.gcal;if(!g||!T.gest||!g.list[g.i])return;
-  let r;try{r=T.gest.recognizeForVideo(vid,now);}catch(e){return;}
-  const l=r&&r.landmarks&&r.landmarks[0];T.handPts=l||null;
-  if(!l){if(!g.goneSince)g.goneSince=now;if(now-g.goneSince>300)g.gone=true;g.prev=null;g.stable=0;return;}
-  g.goneSince=0;if(!g.gone||now<g.cool)return;
-  const hd=r.handedness&&r.handedness[0]&&r.handedness[0][0]&&r.handedness[0][0].categoryName;const v=handVec(l,hd);
-  if(g.prev&&vdist(v,g.prev)<0.12){if(!g.stable)g.stable=now;
-    if(now-g.stable>700){g.samples.push(v.map(x=>+x.toFixed(3)));g.gone=false;g.cool=now+800;g.stable=0;
-      if(g.samples.length>=g.need){const key=g.list[g.i];P().calib.gestures[key]=g.samples;computeGThr();save();g.i++;g.samples=[];
-        if(g.i>=g.list.length){say('Gestos calibrados');toast('✅ Gestos calibrados');T.gcal.list=[];setTimeout(()=>history.back(),900);return;}
-        say('Ahora, '+RLBL[g.list[g.i]]);}
-      else say(String(g.samples.length));
-      renderCalPanel();}}
-  else g.stable=0;
-  g.prev=v;
+  const g=T.gcal;if(!g)return;
+  if(T.frame%2&&!g.cap)return;
+  const d=detectHand(now);g.seen=!!d;
+  if(g.cap&&d){g.cap.vecs.push(handVec(d.l,d.hd));if(!g.cap.img){try{g.cap.img=(d.box?gcv:null)?gcv.toDataURL('image/jpeg',0.7):captureThumb();}catch(e){}}}
+  if(now-(g.lastUi||0)>300){g.lastUi=now;const el=$('#gcSeen');if(el)el.innerHTML=g.seen?'<span style="color:#7ff0ad">✋ Mano detectada</span>':'<span style="color:#ff9b9b">✋ No veo la mano</span>';}
 }
+async function runGestCal(g){
+  const p=P();const alive=()=>T.gcal===g&&T.running&&T.camMode==='gesture';
+  while(alive()&&g.i<g.list.length){
+    const key=g.list[g.i];g.samples=[];g.photos=[];g.count='';renderCalPanel();
+    await sayWait('Preparate para calibrar el gesto de '+RLBL[key]);await sleep(900);
+    let fails=0;
+    while(alive()&&g.samples.length<g.need){
+      for(const n of[3,2,1]){if(!alive())return;g.count=String(n);renderCalPanel();sayWait(String(n),900);await sleep(950);}
+      if(!alive())return;
+      g.count='📸';renderCalPanel();g.cap={vecs:[],img:null};await sleep(700);const cap=g.cap;g.cap=null;
+      if(cap.vecs.length){
+        const dim=cap.vecs[0].length,v=new Array(dim).fill(0);for(const x of cap.vecs)for(let i=0;i<dim;i++)v[i]+=x[i]/cap.vecs.length;
+        g.samples.push(v.map(x=>+x.toFixed(3)));g.photos.push(cap.img);g.count='✔';fails=0;renderCalPanel();
+        await sayWait(g.samples.length<g.need?'Listo':'Gesto guardado',1500);
+      }else{
+        fails++;g.count='✖';renderCalPanel();
+        await sayWait(fails>=3?'No veo tu mano. Acercate un poco o mostrala más grande':'No vi la mano, otra vez',3000);
+      }
+      await sleep(400);
+    }
+    if(!alive())return;
+    p.calib.gestures[key]=g.samples;computeGThr();save();
+    g.photos.forEach((img,i)=>{if(img)idbPut('t',`g_${p.id}_${key}_${i}`,img);});
+    g.i++;
+  }
+  if(!alive())return;
+  g.count='✅';renderCalPanel();toast('✅ Gestos calibrados');await sayWait('Calibración de gestos terminada');
+  if(alive())history.back();
+}
+
+async function loadGestPhotos(){const p=P();for(const el of document.querySelectorAll('.gph')){const r=el.dataset.g,n=+el.dataset.n;let html='';for(let i=0;i<n;i++){const d=await getThumb(`g_${p.id}_${r}_${i}`);if(d)html+=`<img src="${d}" alt="">`;}el.innerHTML=html;}}
 
 /* ---- Voz ---- */
 A.voiceCal=which=>{
@@ -1242,9 +1296,9 @@ VIEWS.calib=()=>{
    <td style="white-space:nowrap"><button class="btn sm" data-a="voiceCal" data-v="${k}">🎙</button>${l.length?`<button class="btn sm" data-a="vcClear" data-v="${k}">✕</button>`:''}</td></tr>`}).join('')}</table>
   </div>
   <div class="card"><b>3. Gestos para calificar</b>
-  <div class="mut">Mostrás 5 veces cada gesto a la cámara. Podés usar el que quieras; los que no calibres usan el gesto sugerido.</div>
+  <div class="mut">La app te guía con cuenta regresiva y saca 10 fotos de cada gesto. Podés usar el gesto que quieras; los que no calibres usan el sugerido.</div>
   <button class="btn pri" style="margin:10px 0" data-a="gestCal" data-v="all">✋ Calibrar los 4 gestos</button>
-  ${Object.keys(RLBL).map(r=>{const n=((c.gestures||{})[r]||[]).length;return `<div class="list-item"><span style="font-size:22px">${RSUG[r]}</span><div class="sp"><b>${RLBL[r]}</b><div class="mut">${n?n+' muestras guardadas':'Usa el gesto sugerido'}</div></div><button class="btn sm" data-a="gestCal" data-v="${r}">Grabar</button>${n?`<button class="btn sm" data-a="gestClear" data-v="${r}">✕</button>`:''}</div>`}).join('')}
+  ${Object.keys(RLBL).map(r=>{const n=((c.gestures||{})[r]||[]).length;return `<div class="list-item"><span style="font-size:22px">${RSUG[r]}</span><div class="sp"><b>${RLBL[r]}</b><div class="mut">${n?n+' fotos guardadas':'Usa el gesto sugerido'}</div>${n?`<div class="gph" data-g="${r}" data-n="${n}"></div>`:''}</div><button class="btn sm" data-a="gestCal" data-v="${r}">Grabar</button>${n?`<button class="btn sm" data-a="gestClear" data-v="${r}">✕</button>`:''}</div>`}).join('')}
   </div>`;
 };
 
