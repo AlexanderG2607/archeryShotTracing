@@ -196,7 +196,7 @@ function newProfile(name){return{id:uid(),name,bowHand:'L',autoRoles:true,autoDe
 function seed(){const p=newProfile('Mi perfil');return{v:1,profiles:[p],activeProfileId:p.id,sessions:[],shots:[],recs:[]};}
 function load(){try{const d=JSON.parse(localStorage.getItem(LS));if(d&&d.profiles&&d.profiles.length)return d;}catch(e){}return seed();}
 let DB=load();
-function migrate(){DB.recs=DB.recs||[];for(const p of DB.profiles){p.calib=Object.assign({model:null,gestures:{},gThr:0.35,voice:{},vcustom:{}},p.calib||{});if(p.params.useModel==null)p.params.useModel=true;if(p.params.relDisp==null)p.params.relDisp=0.08;}}
+function migrate(){DB.recs=DB.recs||[];for(const p of DB.profiles){p.calib=Object.assign({model:null,gestures:{},gThr:0.35,voice:{},vcustom:{}},p.calib||{});if(p.params.useModel==null)p.params.useModel=true;if(p.params.relDisp==null)p.params.relDisp=0.08;if(p.calib.gThr!=null&&p.calib.gThr<0.35)p.calib.gThr=0.35;}}
 migrate();
 function save(){try{localStorage.setItem(LS,JSON.stringify(DB));}catch(e){toast('⚠️ No se pudo guardar: almacenamiento lleno o bloqueado');}}
 const P=()=>DB.profiles.find(p=>p.id===DB.activeProfileId)||DB.profiles[0];
@@ -583,9 +583,9 @@ function loop(){
   const pts=processPose(res,now);
   if(T.camMode==='gesture')gestCalStep(now);
   draw(pts);
-  if(T.camMode==='train'&&T.mode==='rating'){
-    handleGesture(now);
-    if(now>T.ratingUntil){T.mode='live';updatePrompt();}
+  if(T.camMode==='train'){
+    if(T.mode==='rating'){handleGesture(now,false);if(now>T.ratingUntil){T.mode='live';updatePrompt();}}
+    else if(!S.shot&&!T.paused&&(D.st==='idle')&&gestTarget()&&T.frame%2===0)handleGesture(now,true);
   }
   if(now-T.hudT>100){T.hudT=now;updateHud(now);}
 }
@@ -796,30 +796,35 @@ function finalizeShot(t){
     if(isEndFull()){T.blocked=true;T.sel=firstEmptyScore();}
   }
   save();
-  T.mode='rating';T.ratingUntil=performance.now()+prof.params.ratingTimeout*1000;T.g={name:null,since:0};
+  T.rateTarget=null;T.gVotes=[];T.mode='rating';T.ratingUntil=performance.now()+prof.params.ratingTimeout*1000;T.g={name:null,since:0};
   const msg=cmp?`Similitud ${cmp.sim}%`:'';
   say(T.blocked?'Tiro registrado. Tanda completa':'Tiro registrado');
   if(cmp){const top=cmp.devs.filter(d=>Math.abs(d.z)>2).slice(0,1);if(top.length)toast(devText(top[0]),3500);}
   renderEnd();renderLast(msg);updatePrompt();
 }
 function endRating(){T.mode='live';updatePrompt();}
+function gestTarget(){if(T.rateTarget)return shotById(T.rateTarget);const s=shotById(T.lastShotId);return s&&!s.rating?s:null;}
 function rateLast(r){
-  const s=shotById(T.lastShotId);if(!s){toast('Todavía no hay un tiro para calificar');return;}
-  if((r==='perfecto'&&s.perfect)||(r!=='perfecto'&&s.rating===r&&!s.perfect)){if(T.mode==='rating')endRating();return;}   // ya estaba así: no repetir
+  const s=shotById(T.rateTarget||T.lastShotId);if(!s){toast('Todavía no hay un tiro para calificar');return;}
+  const num=sesShots().findIndex(x=>x.id===s.id)+1;const wasTarget=!!T.rateTarget;T.rateTarget=null;
+  if((r==='perfecto'&&s.perfect)||(r!=='perfecto'&&s.rating===r&&!s.perfect)){if(T.mode==='rating')endRating();renderLast();return;}   // ya estaba así: no repetir
   if(r==='perfecto'){s.perfect=true;s.rating='bueno';}else{s.rating=r;if(r!=='bueno')s.perfect=false;}
   save();
   const lbl={bueno:'👍 Bueno',medio:'✋ Medio',malo:'👎 Malo',perfecto:'⭐ Perfecto'}[r];
   toast(lbl+(r==='perfecto'?' · agregado a tu referencia':''));say({bueno:'Bueno',medio:'Medio',malo:'Malo',perfecto:'Perfecto'}[r]);
   T.ignoreVoiceUntil=performance.now()+1500;
+  if(wasTarget&&num)toast(lbl+' · tiro '+num);
   if(T.mode==='rating')endRating();renderLast();
 }
 A.rate=r=>rateLast(r);
+function sesShots(){return T.ses?DB.shots.filter(x=>x.sessionId===T.ses.id).sort((a,b)=>a.t-b.t):[];}
+A.rateSel=id=>{T.rateTarget=T.rateTarget===id?null:id;T.gVotes=[];renderLast();if(T.rateTarget)toast('Calificá el tiro '+(sesShots().findIndex(x=>x.id===id)+1)+' con voz, gesto o botón');};
 /* ---- Detección de la mano: recorte ampliado alrededor de la muñeca (funciona a varios metros) ---- */
 const gcv=document.createElement('canvas');gcv.width=gcv.height=256;const gctx=gcv.getContext('2d');
-function detectHand(now){
+function detectHand(now,manualAlt){
   if(!T.gest||vid.readyState<2)return null;
   const Pp=T.sm;let src=vid,box=null;
-  if(Pp&&Pp[15]&&Pp[16]&&T.frame%3!==2){
+  if(Pp&&Pp[15]&&Pp[16]&&(manualAlt||T.frame%3!==2)){
     const{s}=torsoScale(Pp);
     const arms=[[13,15],[14,16]].sort((a,b)=>Pp[a[1]].y-Pp[b[1]].y);   // primero la mano más alta
     const[e,w]=arms[T.gAlt?1:0],W_=Pp[w],E_=Pp[e];
@@ -830,21 +835,27 @@ function detectHand(now){
   }
   let r;try{r=T.gest.recognizeForVideo(src,now);}catch(x){return null;}
   const l=r&&r.landmarks&&r.landmarks[0];
-  if(!l){if(box)T.gAlt=!T.gAlt;T.handPts=null;return null;}
+  if(!l){if(box&&!manualAlt)T.gAlt=!T.gAlt;T.handPts=null;return null;}
   const hd=r.handedness&&r.handedness[0]&&r.handedness[0][0]&&r.handedness[0][0].categoryName;
   T.handPts=l.map(q=>box?{x:box.x+q.x*box.side,y:box.y+q.y*box.side}:{x:q.x*vid.videoWidth,y:q.y*vid.videoHeight});
   return{l,hd,g:r.gestures&&r.gestures[0]&&r.gestures[0][0],box};
 }
-function handleGesture(now){
-  if(!T.gest||!P().params.gestures||T.frame%2)return;
-  const d=detectHand(now);
+function handleGesture(now,idle){
+  if(!T.gest||!P().params.gestures)return;
   const map={Thumb_Up:'bueno',Thumb_Down:'malo',Open_Palm:'medio',Victory:'perfecto'};
-  const G=P().calib.gestures||{};
+  const G=P().calib.gestures||{},hasCal=Object.values(G).some(a=>a&&a.length);
+  T.gAlt=!T.gAlt;   // alterna entre las dos manos en cada intento
+  const d=detectHand(now,true);
   let key=null;
   if(d){key=gestClassify(handVec(d.l,d.hd));
-    if(!key&&d.g&&d.g.score>0.6&&map[d.g.categoryName]&&!(G[map[d.g.categoryName]]||[]).length)key=map[d.g.categoryName];}
-  if(key){if(T.g.name===key){if(now-T.g.since>700){T.g={name:null,since:0};rateLast(key);}}else T.g={name:key,since:now};}
-  else T.g={name:null,since:0};
+    if(!key&&!idle&&d.g&&d.g.score>0.6&&map[d.g.categoryName]&&!(G[map[d.g.categoryName]]||[]).length)key=map[d.g.categoryName];}
+  if(idle&&!hasCal)return;   // fuera de la ventana de calificación solo se usan tus gestos calibrados
+  T.gVotes=(T.gVotes||[]).filter(v=>now-v.t<1300);
+  if(key){T.gVotes.push({t:now,key});T.gLive=key;}
+  const cnt={};for(const v of T.gVotes)cnt[v.key]=(cnt[v.key]||0)+1;
+  const need=idle?5:3;
+  const ks=Object.keys(cnt).sort((x,y)=>cnt[y]-cnt[x]);
+  if(ks.length&&cnt[ks[0]]>=need&&(ks.length<2||cnt[ks[0]]>cnt[ks[1]]+1)){T.gVotes=[];rateLast(ks[0]);}
 }
 
 /* ---- Tanda / puntaje ---- */
@@ -884,14 +895,17 @@ function rateCol(id){const s=shotById(id);if(!s||!s.rating)return '#8b949e';retu
 function renderLast(extra){
   const s=shotById(T.lastShotId);const el=$('#lastShot');
   if(!s){el.textContent='Sin tiros todavía en esta sesión.';return;}
-  el.innerHTML=`Último tiro: <b>${secs(s.total)}</b>${s.features&&s.features.aim!=null?` · puntería ${fx(s.features.aim,1)} s`:''}${s.similarity!=null?` · similitud <b>${s.similarity}%</b>`:''}${s.rating?` · <span class="tag r-${s.rating}">${s.rating}</span>`:''}${s.perfect?' ⭐':''}`+(T.evlog&&T.evlog.length?`<div style="margin-top:4px">${evSeq()}</div>`:'');
+  const all=sesShots(),from=Math.max(0,all.length-10);
+  const strip=`<div class="row" style="gap:4px;margin:4px 0">${all.slice(from).map((x,i)=>`<button class="cell" style="min-width:34px;height:34px;font-size:13px;${T.rateTarget===x.id?'outline:2px solid var(--acc)':''}" data-a="rateSel" data-v="${x.id}">${from+i+1}<span class="dot" style="background:${rateCol(x.id)}"></span></button>`).join('')}</div>`+
+    (T.rateTarget?`<div style="color:var(--acc)">Calificando el tiro ${all.findIndex(x=>x.id===T.rateTarget)+1}: decí, mostrá el gesto o tocá un botón.</div>`:'<div class="mut" style="font-size:12px">Tocá un número para calificar un tiro anterior.</div>');
+  el.innerHTML=`Último tiro: <b>${secs(s.total)}</b>${s.features&&s.features.aim!=null?` · puntería ${fx(s.features.aim,1)} s`:''}${s.similarity!=null?` · similitud <b>${s.similarity}%</b>`:''}${s.rating?` · <span class="tag r-${s.rating}">${s.rating}</span>`:''}${s.perfect?' ⭐':''}`+strip+(T.evlog&&T.evlog.length?`<div style="margin-top:4px">${evSeq()}</div>`:'');
 }
 
 /* ---- HUD ---- */
 function setHud(a,b){$('#hPhase').textContent=a;$('#hSub').textContent=b||'';}
 function updatePrompt(){
   const el=$('#prompt');
-  if(T.mode==='rating')el.innerHTML='¿Cómo fue? Decí <b>bueno / medio / malo / perfecto</b> o mostrá 👍 ✋ 👎 ✌️';
+  if(T.mode==='rating')el.innerHTML='¿Cómo fue? Decí <b>bueno / medio / malo / perfecto</b> o mostrá tu gesto';
   else if(T.blocked)el.innerHTML='Tanda completa · cargá puntajes · decí <b>"siguiente tanda"</b>';
   else el.innerHTML='';
 }
@@ -947,7 +961,7 @@ function draw(pts){
 
 /* ---- Voz ---- */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null;
-const VCMD={bueno:{l:'Bueno',d:['bueno','buena','bien']},medio:{l:'Medio',d:['medio','regular','mas o menos']},malo:{l:'Malo',d:['malo','mala','mal']},perfecto:{l:'Perfecto',d:['perfecto','perfecta']},
+const VCMD={bueno:{l:'Bueno',d:['bueno','buena','bien']},medio:{l:'Medio',d:['medio','regular','mas o menos']},malo:{l:'Malo',d:['malo','mala','mal']},perfecto:{l:'Perfecto',d:['perfecto','perfecta']},anterior:{l:'Tiro anterior',d:['anterior','tiro anterior','el anterior']},
   siguiente:{l:'Siguiente fase',d:['siguiente','proxima','empezar','comenzar']},tanda:{l:'Siguiente tanda',d:['siguiente tanda','proxima tanda','nueva tanda']},anular:{l:'Anular',d:['anular','cancelar']},
   pausa:{l:'Pausa',d:['pausa','pausar']},seguir:{l:'Seguir',d:['seguir','continuar','reanudar']},grabar:{l:'Grabar (calibración)',d:['grabar','grabando']},detener:{l:'Detener grabación',d:['detener','parar','cortar']}};
 const VSCORE={X:['equis','x'],10:['diez'],9:['nueve'],8:['ocho'],7:['siete'],6:['seis'],5:['cinco'],4:['cuatro'],3:['tres'],2:['dos'],1:['uno','un'],M:['fuera','afuera','mi','miss','cero']};
@@ -991,6 +1005,7 @@ function handleVoice(alts){
   if(k==='pausa'){if(!T.paused)A.pause();return;}
   if(k==='seguir'){if(T.paused)A.pause();return;}
   if(k==='anular'){A.cancelShot();return;}
+  if(k==='anterior'){const a=sesShots();const cur=T.rateTarget?a.findIndex(x=>x.id===T.rateTarget):a.length;if(cur>0){A.rateSel(a[cur-1].id);say('Tiro '+cur);}return;}
   if(k==='bueno'||k==='medio'||k==='malo'||k==='perfecto')rateLast(k);
   else if(k==='siguiente'){A.advance();return;}
   if(T.ses&&T.ses.type==='sesion'){
@@ -1096,7 +1111,7 @@ function renderCalPanel(){
 function handVec(l,hd){const w=l[0],m=l[9];const sc=Math.hypot(m.x-w.x,m.y-w.y)||1;const fl=hd==='Left'?-1:1;const v=[];for(let i=1;i<21;i++)v.push(fl*(l[i].x-w.x)/sc,(l[i].y-w.y)/sc);return v;}
 const vdist=(a,b)=>{let s=0;for(let i=0;i<a.length;i++)s+=(a[i]-b[i])**2;return Math.sqrt(s/a.length);};
 function gestClassify(v){const G=P().calib.gestures||{};let best=null,bd=1e9;for(const r in G)for(const s of G[r]||[]){const d=vdist(v,s);if(d<bd){bd=d;best=r;}}return best&&bd<(P().calib.gThr||0.35)?best:null;}
-function computeGThr(){const G=P().calib.gestures;const ds=[];for(const k in G){const a=G[k]||[];for(let i=0;i<a.length;i++){let m=1e9;for(let j=0;j<a.length;j++)if(i!==j)m=Math.min(m,vdist(a[i],a[j]));if(m<1e9)ds.push(m);}}ds.sort((a,b)=>a-b);const med=ds.length?ds[Math.floor(ds.length/2)]:0.1;P().calib.gThr=+Math.max(0.25,med*3).toFixed(3);}
+function computeGThr(){const G=P().calib.gestures;const ds=[];for(const k in G){const a=G[k]||[];for(let i=0;i<a.length;i++){let m=1e9;for(let j=0;j<a.length;j++)if(i!==j)m=Math.min(m,vdist(a[i],a[j]));if(m<1e9)ds.push(m);}}ds.sort((a,b)=>a-b);const med=ds.length?ds[Math.floor(ds.length/2)]:0.1;P().calib.gThr=+Math.max(0.35,med*4).toFixed(3);}
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function sayWait(text,max=4000){return new Promise(res=>{if(!window.speechSynthesis){setTimeout(res,600);return;}
   let done=false;const fin=()=>{if(!done){done=true;res();}};
