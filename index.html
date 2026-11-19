@@ -313,6 +313,8 @@ VIEWS.profile=()=>{
   ${num('relDisp','Desplazamiento hacia atrás para detectar la suelta (× torso)',pr.relDisp,0.02,0.4,0.01)}
   ${num('releaseSpeed','Velocidad para detectar la suelta (torsos/seg)',pr.releaseSpeed,1,8,0.5)}
   ${num('followMs','Tiempo máximo de seguimiento tras la suelta (ms)',pr.followMs,500,5000,100)}
+  ${num('gestDelay','Espera después del tiro antes de leer gestos (s)',pr.gestDelay??2,0,10,0.5)}
+  ${num('gestHold','Tiempo que hay que mantener el gesto (s)',pr.gestHold??1,0.3,5,0.1)}
   ${num('ratingTimeout','Segundos para calificar con gesto/voz',pr.ratingTimeout,3,60,1)}
   <label class="f">Modelo de detección</label><select data-c="pp" data-k="model"><option value="full"${pr.model==='full'?' selected':''}>Preciso (recomendado)</option><option value="lite"${pr.model==='lite'?' selected':''}>Rápido (celulares más viejos)</option><option value="heavy"${pr.model==='heavy'?' selected':''}>Máxima precisión (lento)</option></select>
   <label class="f">Cámara</label><select data-c="pp" data-k="camera"><option value="environment"${pr.camera==='environment'?' selected':''}>Trasera</option><option value="user"${pr.camera==='user'?' selected':''}>Frontal</option></select>
@@ -796,7 +798,7 @@ function finalizeShot(t){
     if(isEndFull()){T.blocked=true;T.sel=firstEmptyScore();}
   }
   save();
-  T.rateTarget=null;T.gVotes=[];T.mode='rating';T.ratingUntil=performance.now()+prof.params.ratingTimeout*1000;T.g={name:null,since:0};
+  T.rateTarget=null;T.gVotes=[];T.gHold=null;T.shotEndT=performance.now();T.mode='rating';T.ratingUntil=(prof.params.gestDelay??2)*1000+performance.now()+prof.params.ratingTimeout*1000;T.g={name:null,since:0};
   const msg=cmp?`Similitud ${cmp.sim}%`:'';
   say(T.blocked?'Tiro registrado. Tanda completa':'Tiro registrado');
   if(cmp){const top=cmp.devs.filter(d=>Math.abs(d.z)>2).slice(0,1);if(top.length)toast(devText(top[0]),3500);}
@@ -818,7 +820,7 @@ function rateLast(r){
 }
 A.rate=r=>rateLast(r);
 function sesShots(){return T.ses?DB.shots.filter(x=>x.sessionId===T.ses.id).sort((a,b)=>a.t-b.t):[];}
-A.rateSel=id=>{T.rateTarget=T.rateTarget===id?null:id;T.gVotes=[];renderLast();if(T.rateTarget)toast('Calificá el tiro '+(sesShots().findIndex(x=>x.id===id)+1)+' con voz, gesto o botón');};
+A.rateSel=id=>{T.rateTarget=T.rateTarget===id?null:id;T.gVotes=[];T.gHold=null;renderLast();if(T.rateTarget)toast('Calificá el tiro '+(sesShots().findIndex(x=>x.id===id)+1)+' con voz, gesto o botón');};
 /* ---- Detección de la mano: recorte ampliado alrededor de la muñeca (funciona a varios metros) ---- */
 const gcv=document.createElement('canvas');gcv.width=gcv.height=256;const gctx=gcv.getContext('2d');
 function detectHand(now,manualAlt){
@@ -850,12 +852,16 @@ function handleGesture(now,idle){
   if(d){key=gestClassify(handVec(d.l,d.hd));
     if(!key&&!idle&&d.g&&d.g.score>0.6&&map[d.g.categoryName]&&!(G[map[d.g.categoryName]]||[]).length)key=map[d.g.categoryName];}
   if(idle&&!hasCal)return;   // fuera de la ventana de calificación solo se usan tus gestos calibrados
-  T.gVotes=(T.gVotes||[]).filter(v=>now-v.t<1300);
-  if(key){T.gVotes.push({t:now,key});T.gLive=key;}
-  const cnt={};for(const v of T.gVotes)cnt[v.key]=(cnt[v.key]||0)+1;
-  const need=idle?5:3;
-  const ks=Object.keys(cnt).sort((x,y)=>cnt[y]-cnt[x]);
-  if(ks.length&&cnt[ks[0]]>=need&&(ks.length<2||cnt[ks[0]]>cnt[ks[1]]+1)){T.gVotes=[];rateLast(ks[0]);}
+  const prm=P().params,delay=(prm.gestDelay??2)*1000,hold=(prm.gestHold??1)*1000;
+  if(!idle&&now-(T.shotEndT||0)<delay){T.gHold=null;return;}          // esperar después del tiro
+  const gh=T.gHold;
+  if(key){
+    if(gh&&gh.key===key&&now-gh.last<450){gh.last=now;gh.n++;}
+    else T.gHold={key,since:now,last:now,n:1};
+  }else if(gh&&now-gh.last>=450)T.gHold=null;                          // se perdió el gesto
+  const g2=T.gHold;
+  if(g2){const pr=Math.min(1,(now-g2.since)/hold);$('#hint').textContent=`${RSUG[g2.key]} ${RLBL[g2.key]} · mantené ${'▮'.repeat(Math.round(pr*5))}${'▯'.repeat(5-Math.round(pr*5))}`;T.hintT=now;
+    if(now-g2.since>=hold&&g2.n>=(idle?6:4)){T.gHold=null;$('#hint').textContent='';rateLast(g2.key);}}
 }
 
 /* ---- Tanda / puntaje ---- */
